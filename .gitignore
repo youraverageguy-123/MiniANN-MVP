@@ -1,0 +1,42 @@
+# Executables / object files
+*.exe
+*.out
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.so
+
+# CMake build dirs / cache
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+_deps/
+
+# Generated model + training outputs (recreated by running demos/tests)
+*.model
+/*_loss.csv
+/*loss.csv
+training_loss.csv
+circles_*.csv
+
+# Keep dataset inputs under data/
+!data/*.csv
+
+# Editor / OS junk
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+Thumbs.db
+.DS_Store
+
+# Python plot helper output (if you use plot.py)
+training_curve.png
+__pycache__/
