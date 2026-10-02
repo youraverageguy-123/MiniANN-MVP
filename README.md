@@ -1,4 +1,4 @@
-# MiniANN — C++ Artificial Neural Network Library (Problem Statement 5)
+# MiniANN: C++ Artificial Neural Network Library (Problem Statement 5)
 
 A modular, lightweight feed-forward Artificial Neural Network framework written from scratch in
 **modern C++17**. No PyTorch, no TensorFlow, no Eigen, no BLAS.
