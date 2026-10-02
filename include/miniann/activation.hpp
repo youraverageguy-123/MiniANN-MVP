@@ -44,6 +44,28 @@ public:
     std::string name() const override { return "relu"; }
 };
 
+class LeakyReLU : public IActivation {
+public:
+    explicit LeakyReLU(double alpha = 0.01) : alpha_(alpha) {}
+    double activate(double z) const override { return z > 0.0 ? z : alpha_ * z; }
+    double derivative(double z) const override { return z > 0.0 ? 1.0 : alpha_; }
+    std::string name() const override { return "leaky_relu"; }
+private:
+    double alpha_;
+};
+
+class Swish : public IActivation {
+public:
+    double activate(double z) const override {
+        return z / (1.0 + std::exp(-z)); // z * sigmoid(z)
+    }
+    double derivative(double z) const override {
+        double s = 1.0 / (1.0 + std::exp(-z));
+        return s + z * s * (1.0 - s); // sigmoid + z*sigmoid*(1-sigmoid)
+    }
+    std::string name() const override { return "swish"; }
+};
+
 class ActivationFactory {
 public:
     static ActivationPtr create(const std::string& name); // throws invalid_argument

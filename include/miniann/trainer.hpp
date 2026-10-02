@@ -20,6 +20,16 @@ struct TrainingConfig {
 struct TrainingHistory {
     std::vector<double> trainLoss;
     std::vector<double> validationLoss;
+    std::vector<double> trainAcc;      // threshold/argmax accuracy per epoch
+    std::vector<double> validationAcc;
+};
+
+// Streaming hook: called at the end of every epoch. Live monitors
+// (console plots, GUIs) implement this; batch training is unaffected.
+class TrainingCallback {
+public:
+    virtual ~TrainingCallback() = default;
+    virtual void onEpoch(int epoch, const TrainingHistory& hist) = 0;
 };
 
 class Trainer {
@@ -27,7 +37,7 @@ public:
     Trainer(NeuralNetwork& net, const ILoss& loss, IOptimizer& opt,
             ILogger* logger = nullptr);
     TrainingHistory fit(const Dataset& train, const Dataset* validation,
-                        const TrainingConfig& cfg);
+                        const TrainingConfig& cfg, TrainingCallback* cb = nullptr);
 private:
     NeuralNetwork& net_;
     const ILoss& loss_;

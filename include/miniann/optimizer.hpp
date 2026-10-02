@@ -2,6 +2,8 @@
 #include "miniann/network.hpp"
 #include <vector>
 #include <cstddef>
+#include <memory>
+#include <string>
 
 namespace miniann {
 
@@ -28,6 +30,25 @@ private:
 public:
     explicit Adam(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8);
     void step(NeuralNetwork& net, std::size_t batchSize) override;
+};
+
+// Classical momentum: velocity v <- mu*v - lr*(grad/B), params += v.
+// Sits between SGD (mu=0) and Adam (adaptive per-weight rates).
+class Momentum : public IOptimizer {
+private:
+    double lr_, mu_;
+    std::vector<std::vector<Vector>> v_w_;
+    std::vector<std::vector<double>> v_b_;
+public:
+    explicit Momentum(double lr = 0.01, double mu = 0.9);
+    void step(NeuralNetwork& net, std::size_t batchSize) override;
+};
+
+// Factory so the user picks the descent method by name at runtime:
+// "sgd" | "momentum" | "adam". Throws invalid_argument otherwise.
+class OptimizerFactory {
+public:
+    static std::unique_ptr<IOptimizer> create(const std::string& name, double lr);
 };
 
 } // namespace miniann

@@ -63,11 +63,15 @@ NeuralNetwork ModelSerializer::load(const std::string& path, std::mt19937& rng) 
 void CSVLossExporter::exportHistory(const TrainingHistory& hist, const std::string& filepath) {
     std::ofstream f(filepath);
     if (!f) throw std::runtime_error("CSVLossExporter: cannot open " + filepath);
-    f << "epoch,train_loss,val_loss\n";
+    f << "epoch,train_loss,val_loss,train_acc,val_acc\n";
     f << std::setprecision(17);
     for (std::size_t i = 0; i < hist.trainLoss.size(); ++i) {
         f << (i + 1) << "," << hist.trainLoss[i] << ",";
         if (i < hist.validationLoss.size()) f << hist.validationLoss[i];
+        f << ",";
+        if (i < hist.trainAcc.size()) f << hist.trainAcc[i];
+        f << ",";
+        if (i < hist.validationAcc.size()) f << hist.validationAcc[i];
         f << "\n";
     }
 }

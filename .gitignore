@@ -24,6 +24,7 @@ _deps/
 /*loss.csv
 training_loss.csv
 circles_*.csv
+/*_report.html
 
 # Keep dataset inputs under data/
 !data/*.csv

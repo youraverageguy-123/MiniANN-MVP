@@ -22,6 +22,10 @@ public:
     const Vector& gradWeights() const { return gradWeights_; }
     double gradBias() const { return gradBias_; }
     const IActivation& activation() const { return *activation_; }
+    // Output of the most recent forward() (re-fires cached pre-activation).
+    // Used by live monitors; training math is unaffected (caches rewritten
+    // on the next forward pass before any backward()).
+    double lastOutput() const { return activation_->activate(lastZ_); }
 
     void setParameters(Vector w, double b); // used by ModelSerializer
     void applyStep(const Vector& dW, double dB); // w += dW, b += dB (optimizers)

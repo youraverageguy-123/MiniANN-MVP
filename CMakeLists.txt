@@ -19,6 +19,7 @@ add_library(miniann
   src/metrics.cpp
   src/logger.cpp
   src/serializer.cpp
+  src/visualizer.cpp
 )
 
 add_executable(xor_demo demos/xor_demo.cpp)
@@ -30,8 +31,17 @@ target_link_libraries(and_or_demo miniann)
 add_executable(iris_demo demos/iris_demo.cpp)
 target_link_libraries(iris_demo miniann)
 
+add_executable(compare_demo demos/compare_demo.cpp)
+target_link_libraries(compare_demo miniann)
+
+add_executable(playground demos/playground.cpp)
+target_link_libraries(playground miniann)
+
 add_executable(gradient_check tests/gradient_check.cpp)
 target_link_libraries(gradient_check miniann)
 
 add_executable(test_basic tests/test_basic.cpp)
 target_link_libraries(test_basic miniann)
+
+add_executable(test_choices tests/test_choices.cpp)
+target_link_libraries(test_choices miniann)

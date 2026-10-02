@@ -1,5 +1,6 @@
 #include "miniann/optimizer.hpp"
 #include <cmath>
+#include <stdexcept>
 
 namespace miniann {
 
@@ -65,6 +66,47 @@ void Adam::step(NeuralNetwork& net, std::size_t batchSize) {
             n.applyStep(dW, dB);
         }
     }
+}
+
+Momentum::Momentum(double lr, double mu) : lr_(lr), mu_(mu) {}
+
+void Momentum::step(NeuralNetwork& net, std::size_t batchSize) {
+    if (batchSize == 0) batchSize = 1;
+    auto& layers = net.layers();
+    if (v_w_.size() != layers.size()) {
+        v_w_.resize(layers.size());
+        v_b_.resize(layers.size());
+        for (std::size_t l = 0; l < layers.size(); ++l) {
+            auto& neurons = layers[l].neurons();
+            v_w_[l].resize(neurons.size());
+            v_b_[l].assign(neurons.size(), 0.0);
+            for (std::size_t j = 0; j < neurons.size(); ++j)
+                v_w_[l][j].assign(neurons[j].weights().size(), 0.0);
+        }
+    }
+    for (std::size_t l = 0; l < layers.size(); ++l) {
+        auto& neurons = layers[l].neurons();
+        for (std::size_t j = 0; j < neurons.size(); ++j) {
+            auto& n = neurons[j];
+            Vector dW(n.weights().size());
+            for (std::size_t i = 0; i < dW.size(); ++i) {
+                double g = n.gradWeights()[i] / double(batchSize);
+                v_w_[l][j][i] = mu_ * v_w_[l][j][i] - lr_ * g;
+                dW[i] = v_w_[l][j][i];
+            }
+            double gb = n.gradBias() / double(batchSize);
+            v_b_[l][j] = mu_ * v_b_[l][j] - lr_ * gb;
+            n.applyStep(dW, v_b_[l][j]);
+        }
+    }
+}
+
+std::unique_ptr<IOptimizer> OptimizerFactory::create(const std::string& name, double lr) {
+    if (name == "sgd") return std::make_unique<SGD>(lr);
+    if (name == "momentum") return std::make_unique<Momentum>(lr);
+    if (name == "adam") return std::make_unique<Adam>(lr);
+    throw std::invalid_argument("OptimizerFactory: unknown optimizer '" + name +
+                                "' (choose sgd|momentum|adam)");
 }
 
 } // namespace miniann
