@@ -70,6 +70,36 @@ void Adam::step(NeuralNetwork& net, std::size_t batchSize) {
 
 Momentum::Momentum(double lr, double mu) : lr_(lr), mu_(mu) {}
 
+Adam::State Adam::state() const {
+    State s;
+    s.t = t_;
+    s.mW = m_w_;
+    s.vW = v_w_;
+    s.mB = m_b_;
+    s.vB = v_b_;
+    return s;
+}
+
+void Adam::restore(const State& s) {
+    t_ = s.t;
+    m_w_ = s.mW;
+    v_w_ = s.vW;
+    m_b_ = s.mB;
+    v_b_ = s.vB;
+}
+
+Momentum::State Momentum::state() const {
+    State s;
+    s.vW = v_w_;
+    s.vB = v_b_;
+    return s;
+}
+
+void Momentum::restore(const State& s) {
+    v_w_ = s.vW;
+    v_b_ = s.vB;
+}
+
 void Momentum::step(NeuralNetwork& net, std::size_t batchSize) {
     if (batchSize == 0) batchSize = 1;
     auto& layers = net.layers();

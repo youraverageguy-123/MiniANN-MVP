@@ -55,3 +55,9 @@ Thumbs.db
 # Python plot helper output (if you use plot.py)
 training_curve.png
 __pycache__/
+
+# Qt workbench artifacts (friend's UI, optional)
+moc_*.cpp
+*.moc
+qt_model.miniann
+qt_report.html

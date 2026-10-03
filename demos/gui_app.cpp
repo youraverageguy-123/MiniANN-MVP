@@ -24,7 +24,7 @@
 using namespace miniann;
 
 enum ActiveDataset { DS_AND = 0, DS_OR = 1, DS_XOR = 2, DS_IRIS = 3, DS_CSV = 4 };
-enum ActiveActivation { ACT_SIGMOID = 0, ACT_TANH = 1, ACT_RELU = 2, ACT_LEAKY_RELU = 3, ACT_SWISH = 4 };
+enum ActiveActivation { ACT_SIGMOID = 0, ACT_TANH = 1, ACT_RELU = 2, ACT_LEAKY_RELU = 3, ACT_SWISH = 4, ACT_LINEAR = 5, ACT_SOFTMAX = 6 };
 enum ActiveLoss { LOSS_MSE = 0, LOSS_BCE = 1, LOSS_CCE = 2 };
 enum ActiveOptimizer { OPT_SGD = 0, OPT_MOMENTUM = 1, OPT_ADAM = 2 };
 enum ActiveTab { TAB_LOSS = 0, TAB_ACCURACY = 1 };
@@ -106,6 +106,8 @@ static std::string ActivationToString(ActiveActivation act) {
     if (act == ACT_TANH)       return "tanh";
     if (act == ACT_RELU)       return "relu";
     if (act == ACT_LEAKY_RELU) return "leaky_relu";
+    if (act == ACT_LINEAR)     return "linear";
+    if (act == ACT_SOFTMAX)    return "softmax";
     return "swish";
 }
 
@@ -172,9 +174,12 @@ void StartTrainingThread(ActiveDataset dsType, const std::string& csvPath, int t
             net.addLayer(Layer(std::size_t(actualSizes[2]), std::size_t(actualSizes[1]),
                                ActivationFactory::create(actName2), rng, WeightInit::Xavier));
 
-            // Output Layer
+            // Output Layer: softmax for multi-class CCE, else sigmoid
+            // (parity with Qt workbench output selector).
+            std::string outAct = "sigmoid";
+            if (outDim > 1 && lossName == "cce") outAct = "softmax";
             net.addLayer(Layer(std::size_t(actualSizes[3]), std::size_t(actualSizes[2]),
-                               ActivationFactory::create("sigmoid"), rng, WeightInit::Xavier));
+                               ActivationFactory::create(outAct), rng, WeightInit::Xavier));
 
             auto loss = LossFactory::create(lossName);
             auto opt = OptimizerFactory::create(optName, (double)lr);

@@ -13,6 +13,7 @@ public:
     virtual double activate(double z) const = 0;
     virtual double derivative(double z) const = 0; // evaluated at pre-activation z
     virtual std::string name() const = 0;
+    virtual bool isVector() const { return false; } // true for joint ops like softmax
 };
 
 using ActivationPtr = std::shared_ptr<const IActivation>;
@@ -46,10 +47,14 @@ public:
 
 class LeakyReLU : public IActivation {
 public:
-    explicit LeakyReLU(double alpha = 0.01) : alpha_(alpha) {}
+    explicit LeakyReLU(double alpha = 0.01) : alpha_(alpha) {
+        if (!(alpha > 0.0) || alpha >= 1.0)
+            throw std::invalid_argument("LeakyReLU: alpha must be in (0,1)");
+    }
     double activate(double z) const override { return z > 0.0 ? z : alpha_ * z; }
     double derivative(double z) const override { return z > 0.0 ? 1.0 : alpha_; }
     std::string name() const override { return "leaky_relu"; }
+    double alpha() const { return alpha_; }
 private:
     double alpha_;
 };
@@ -72,6 +77,20 @@ public:
     double activate(double z) const override { return z; }
     double derivative(double) const override { return 1.0; }
     std::string name() const override { return "linear"; }
+};
+
+// Joint softmax over a whole layer (stable z-max). Per-neuron activate()/
+// derivative() throw: use Layer::forward/backward which applies the joint op.
+class Softmax : public IActivation {
+public:
+    double activate(double) const override {
+        throw std::logic_error("Softmax: use Layer joint forward, not per-neuron activate()");
+    }
+    double derivative(double) const override {
+        throw std::logic_error("Softmax: use Layer joint backward, not per-neuron derivative()");
+    }
+    std::string name() const override { return "softmax"; }
+    bool isVector() const override { return true; }
 };
 
 class ActivationFactory {

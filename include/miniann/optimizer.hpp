@@ -19,6 +19,7 @@ private:
 public:
     explicit SGD(double learningRate) : lr_(learningRate) {}
     void step(NeuralNetwork& net, std::size_t batchSize) override;
+    double lr() const { return lr_; }
 };
 
 class Adam : public IOptimizer {
@@ -30,6 +31,19 @@ private:
 public:
     explicit Adam(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8);
     void step(NeuralNetwork& net, std::size_t batchSize) override;
+    double lr() const { return lr_; }
+    double beta1() const { return beta1_; }
+    double beta2() const { return beta2_; }
+    double eps() const { return eps_; }
+    std::size_t stepCount() const { return t_; }
+    // State for resume: exact m/v tables + step count.
+    struct State {
+        std::size_t t = 0;
+        std::vector<std::vector<Vector>> mW, vW;
+        std::vector<std::vector<double>> mB, vB;
+    };
+    State state() const;
+    void restore(const State& s);
 };
 
 // Classical momentum: velocity v <- mu*v - lr*(grad/B), params += v.
@@ -42,6 +56,14 @@ private:
 public:
     explicit Momentum(double lr = 0.01, double mu = 0.9);
     void step(NeuralNetwork& net, std::size_t batchSize) override;
+    double lr() const { return lr_; }
+    double mu() const { return mu_; }
+    struct State {
+        std::vector<std::vector<Vector>> vW;
+        std::vector<std::vector<double>> vB;
+    };
+    State state() const;
+    void restore(const State& s);
 };
 
 // Hyperparameters exposed to the UI. Defaults match each class's ctor defaults.
