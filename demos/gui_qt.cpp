@@ -38,6 +38,7 @@
 #include <QFontMetrics>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QScrollBar>
 #include <QCloseEvent>
 #include <QMimeData>
 #include <QUrl>
@@ -812,7 +813,9 @@ public:
     void setExpanded(bool e) {
         m_expanded = e;
         m_body->setVisible(e);
-        m_head->setText((m_expanded ? QString::fromUtf8("▾  ") : QString::fromUtf8("▸  ")) + m_title);
+        QString disp = m_title;
+        disp.replace(QStringLiteral("&"), QStringLiteral("&&"));
+        m_head->setText((m_expanded ? QString::fromUtf8("▾  ") : QString::fromUtf8("▸  ")) + disp);
     }
 
 private:
@@ -1023,6 +1026,7 @@ private:
     QTimer* m_timer = nullptr;
     QSlider* m_speedSlider = nullptr;
     QPushButton* m_stepBtn = nullptr;
+    QScrollArea* m_cfgScroll = nullptr;
 
     static void checkOnly(const std::vector<QPushButton*>& v, int idx) {
         for (int i = 0; i < (int)v.size(); ++i)
@@ -1206,13 +1210,13 @@ private:
         // The config column (~1150px of controls) is taller than short
         // windows: without scrolling, QVBoxLayout squeezes word-wrap labels
         // to 0px and overlaps rows, which painted as dotted/ghosted text.
-        auto* cfgScroll = new QScrollArea;
-        cfgScroll->setWidgetResizable(true);
-        cfgScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        cfgScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-        cfgScroll->setFrameShape(QFrame::NoFrame);
-        cfgScroll->setWidget(m_configBox);
-        outer->addWidget(cfgScroll, 1);
+        m_cfgScroll = new QScrollArea;
+        m_cfgScroll->setWidgetResizable(true);
+        m_cfgScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        m_cfgScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+        m_cfgScroll->setFrameShape(QFrame::NoFrame);
+        m_cfgScroll->setWidget(m_configBox);
+        outer->addWidget(m_cfgScroll, 1);
 
         // presets
         auto* preRow = new QHBoxLayout;
@@ -1330,13 +1334,38 @@ private:
         auto* sec2 = new CollapsibleSection(QStringLiteral("2. ARCHITECTURE"), true, m_configBox);
         lv->addWidget(sec2);
         QVBoxLayout* s2 = sec2->content();
+
+        auto* archCard = new QFrame;
+        archCard->setStyleSheet(QStringLiteral("background:#141824; border:1px solid #1E2333; border-radius:8px;"));
+        auto* archCardLay = new QVBoxLayout(archCard);
+        archCardLay->setContentsMargins(12, 12, 12, 12);
+        archCardLay->setSpacing(10);
+
+        // Top row: Layers count with [-] and [+] steppers
         auto* layRow = new QHBoxLayout;
-        layRow->setSpacing(6);
+        layRow->setSpacing(8);
         m_layersLbl = new QLabel;
-        m_layersLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        m_layersLbl->setStyleSheet(QStringLiteral("color:#F1F5F9; font-weight:600; font-size:12px;"));
         layRow->addWidget(m_layersLbl);
-        auto* layMinus = makeBtn(QStringLiteral("-"), 30);
-        auto* layPlus = makeBtn(QStringLiteral("+"), 30);
+        layRow->addStretch(1);
+
+        auto* stepWell = new QFrame;
+        stepWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        auto* stepWellLay = new QHBoxLayout(stepWell);
+        stepWellLay->setContentsMargins(2, 2, 2, 2);
+        stepWellLay->setSpacing(2);
+
+        auto* layMinus = new QPushButton(QStringLiteral("−"));
+        auto* layPlus = new QPushButton(QStringLiteral("+"));
+        for (auto* btn : {layMinus, layPlus}) {
+            btn->setFixedSize(28, 26);
+            btn->setCursor(Qt::PointingHandCursor);
+            btn->setStyleSheet(QStringLiteral(
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:14px; font-weight:bold; }"
+                "QPushButton:hover { background:rgba(255,255,255,0.08); color:#FFFFFF; }"
+                "QPushButton:pressed { background:#2563EB; color:#FFFFFF; }"));
+            stepWellLay->addWidget(btn);
+        }
         connect(layMinus, &QPushButton::clicked, [this]() {
             if (m_hidden.size() > 1) {
                 m_hidden.pop_back();
@@ -1349,63 +1378,80 @@ private:
                 configChanged();
             }
         });
-        layRow->addWidget(layMinus);
-        layRow->addWidget(layPlus);
-        layRow->addStretch(1);
-        s2->addLayout(layRow);
-        // Architecture summary panel
-        auto* archPanel = new QFrame;
-        archPanel->setObjectName(QStringLiteral("panel"));
-        archPanel->setStyleSheet(QStringLiteral(
-            "background:#141824; border:1px solid #1E2333; border-radius:6px;"));
-        auto* archLay = new QVBoxLayout(archPanel);
-        archLay->setContentsMargins(12, 10, 12, 10);
-        archLay->setSpacing(4);
+        layRow->addWidget(stepWell);
+        archCardLay->addLayout(layRow);
+
+        // Architecture summary badge / box
+        auto* archSummaryBox = new QFrame;
+        archSummaryBox->setStyleSheet(QStringLiteral("background:#0E111A; border:1px solid #1E2333; border-radius:6px;"));
+        auto* archSumLay = new QVBoxLayout(archSummaryBox);
+        archSumLay->setContentsMargins(10, 8, 10, 8);
+        archSumLay->setSpacing(4);
+
         m_archLbl = new QLabel;
-        m_archLbl->setStyleSheet(QStringLiteral("color:#60A5FA; font-weight:600; font-size:12px;"));
+        m_archLbl->setStyleSheet(QStringLiteral("color:#60A5FA; font-weight:700; font-family:'Consolas','Segoe UI',monospace; font-size:12px;"));
         m_archLbl->setWordWrap(true);
-        archLay->addWidget(m_archLbl);
-        // Hidden-layer detail lives in a popup (1-8 layers without clutter).
+        archSumLay->addWidget(m_archLbl);
+
         m_hiddenSumLbl = new QLabel;
         m_hiddenSumLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px;"));
         m_hiddenSumLbl->setWordWrap(true);
-        archLay->addWidget(m_hiddenSumLbl);
-        s2->addWidget(archPanel);
+        archSumLay->addWidget(m_hiddenSumLbl);
+        archCardLay->addWidget(archSummaryBox);
+
+        // Configure button (full width rectangular button)
         m_hiddenCfgBtn = makeBtn(QStringLiteral("Configure hidden layers…"));
         m_hiddenCfgBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         connect(m_hiddenCfgBtn, &QPushButton::clicked, [this]() { openHiddenDialog(); });
-        s2->addWidget(m_hiddenCfgBtn);
+        archCardLay->addWidget(m_hiddenCfgBtn);
+
+        // Output activation row
         auto* outRow = new QHBoxLayout;
-        outRow->setSpacing(6);
-        auto* outLbl = new QLabel(QStringLiteral("Output act:"));
-        outLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        outRow->setSpacing(8);
+        auto* outLbl = new QLabel(QStringLiteral("Output Activation"));
+        outLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:600;"));
         outRow->addWidget(outLbl);
+        outRow->addStretch(1);
         m_outActCombo = new QComboBox;
         for (auto n : kOutActLabels) m_outActCombo->addItem(QString::fromLatin1(n));
         m_outActCombo->setCurrentIndex(0);
+        m_outActCombo->setMinimumWidth(110);
         connect(m_outActCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int i) {
             m_outputAct = kOutActKeys[std::max(0, std::min(5, i))];
             configChanged();
         });
-        outRow->addWidget(m_outActCombo, 1);
-        s2->addLayout(outRow);
+        outRow->addWidget(m_outActCombo);
+        archCardLay->addLayout(outRow);
+
+        s2->addWidget(archCard);
 
         // 3. training (§9)
         auto* sec3 = new CollapsibleSection(QStringLiteral("3. TRAINING"), true, m_configBox);
         lv->addWidget(sec3);
         QVBoxLayout* s3 = sec3->content();
+
+        auto* trainCard = new QFrame;
+        trainCard->setStyleSheet(QStringLiteral("background:#141824; border:1px solid #1E2333; border-radius:8px;"));
+        auto* trainCardLay = new QVBoxLayout(trainCard);
+        trainCardLay->setContentsMargins(12, 12, 12, 12);
+        trainCardLay->setSpacing(12);
+
+        // Epochs Group
+        auto* epGroup = new QVBoxLayout;
+        epGroup->setSpacing(6);
         auto* epTop = new QHBoxLayout;
         epTop->setSpacing(8);
-        m_epochValLbl = new QLabel;
-        m_epochValLbl->setStyleSheet(QStringLiteral("color:#60A5FA; background:#141824; border:1px solid #1E2333; border-radius:4px; padding:2px 8px; font-family:'Consolas',monospace; font-weight:bold; font-size:11px;"));
-        epTop->addWidget(m_epochValLbl);
         auto* epLab = new QLabel(QStringLiteral("EPOCHS"));
-        epLab->setStyleSheet(QStringLiteral("color:#64748B; font-weight:700; font-size:10px; letter-spacing:0.5px;"));
+        epLab->setStyleSheet(QStringLiteral("color:#94A3B8; font-weight:700; font-size:11px; letter-spacing:0.5px;"));
         epTop->addWidget(epLab);
         epTop->addStretch(1);
-        s3->addLayout(epTop);
+        m_epochValLbl = new QLabel;
+        m_epochValLbl->setStyleSheet(QStringLiteral("color:#60A5FA; background:#0E111A; border:1px solid #1E2333; border-radius:4px; padding:2px 8px; font-family:'Consolas',monospace; font-weight:bold; font-size:11px;"));
+        epTop->addWidget(m_epochValLbl);
+        epGroup->addLayout(epTop);
+
         auto* epRow = new QHBoxLayout;
-        epRow->setSpacing(6);
+        epRow->setSpacing(8);
         m_epochSlider = new QSlider(Qt::Horizontal);
         m_epochSlider->setRange(100, 10000);
         m_epochSlider->setSingleStep(50);
@@ -1423,7 +1469,7 @@ private:
         m_epochSpin->setRange(1, 200000);
         m_epochSpin->setSingleStep(50);
         m_epochSpin->setValue(1500);
-        m_epochSpin->setFixedWidth(84);
+        m_epochSpin->setFixedWidth(80);
         connect(m_epochSpin, &QSpinBox::valueChanged, [this](int v) {
             if (v != m_epochsTarget) {
                 m_epochsTarget = v;
@@ -1431,8 +1477,24 @@ private:
             }
         });
         epRow->addWidget(m_epochSpin);
-        auto* epMinus = makeBtn(QStringLiteral("-100"), 52);
-        auto* epPlus = makeBtn(QStringLiteral("+100"), 52);
+
+        auto* epStepWell = new QFrame;
+        epStepWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        auto* epStepLay = new QHBoxLayout(epStepWell);
+        epStepLay->setContentsMargins(2, 2, 2, 2);
+        epStepLay->setSpacing(2);
+
+        auto* epMinus = new QPushButton(QStringLiteral("−100"));
+        auto* epPlus = new QPushButton(QStringLiteral("+100"));
+        for (auto* btn : {epMinus, epPlus}) {
+            btn->setFixedHeight(26);
+            btn->setCursor(Qt::PointingHandCursor);
+            btn->setStyleSheet(QStringLiteral(
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:bold; padding:2px 6px; }"
+                "QPushButton:hover { background:rgba(255,255,255,0.08); color:#FFFFFF; }"
+                "QPushButton:pressed { background:#2563EB; color:#FFFFFF; }"));
+            epStepLay->addWidget(btn);
+        }
         connect(epMinus, &QPushButton::clicked, [this]() {
             m_epochsTarget = std::max(1, m_epochsTarget - 100);
             configChanged();
@@ -1441,65 +1503,49 @@ private:
             m_epochsTarget = std::min(200000, m_epochsTarget + 100);
             configChanged();
         });
-        epRow->addWidget(epMinus);
-        epRow->addWidget(epPlus);
-        s3->addLayout(epRow);
+        epRow->addWidget(epStepWell);
+        epGroup->addLayout(epRow);
+        trainCardLay->addLayout(epGroup);
 
-        auto* batchRow = new QHBoxLayout;
-        batchRow->setSpacing(8);
-        batchRow->addWidget(makeDim(QStringLiteral("BATCH SIZE")));
+        // Divider
+        auto* div1 = new QFrame;
+        div1->setFrameShape(QFrame::HLine);
+        div1->setStyleSheet(QStringLiteral("background:#1E2333; max-height:1px; border:none;"));
+        trainCardLay->addWidget(div1);
+
+        // Parameters Grid: Batch Size, Normalize, Learning Rate, Seed
+        auto* paramGrid = new QGridLayout;
+        paramGrid->setHorizontalSpacing(12);
+        paramGrid->setVerticalSpacing(10);
+
+        // Batch Size
+        auto* bCol = new QVBoxLayout;
+        bCol->setSpacing(4);
+        auto* bHead = new QHBoxLayout;
+        auto* bLbl = new QLabel(QStringLiteral("BATCH SIZE"));
+        bLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        bHead->addWidget(bLbl);
+        bHead->addStretch(1);
+        m_effBatchLbl = new QLabel;
+        m_effBatchLbl->setStyleSheet(QStringLiteral("color:#64748B; font-size:10px;"));
+        bHead->addWidget(m_effBatchLbl);
+        bCol->addLayout(bHead);
         m_batchCombo = new QComboBox;
         for (auto n : kBatchLabels) m_batchCombo->addItem(QString::fromLatin1(n));
         m_batchCombo->setCurrentIndex(0);
-        m_batchCombo->setFixedWidth(80);
         connect(m_batchCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int i) {
             m_batchIdx = std::max(0, std::min(6, i));
             configChanged();
         });
-        batchRow->addWidget(m_batchCombo);
-        m_effBatchLbl = new QLabel;
-        m_effBatchLbl->setStyleSheet(QStringLiteral("color:#8A90A0;"));
-        batchRow->addWidget(m_effBatchLbl);
-        batchRow->addStretch(1);
-        s3->addLayout(batchRow);
+        bCol->addWidget(m_batchCombo);
+        paramGrid->addLayout(bCol, 0, 0);
 
-        auto* lrRow = new QHBoxLayout;
-        lrRow->setSpacing(8);
-        lrRow->addWidget(makeDim(QStringLiteral("LEARNING RATE")));
-        m_lrSpin = new QDoubleSpinBox;
-        m_lrSpin->setRange(0.0001, 1.0);
-        m_lrSpin->setDecimals(4);
-        m_lrSpin->setSingleStep(0.005);
-        m_lrSpin->setValue(0.05);
-        m_lrSpin->setFixedWidth(90);
-        connect(m_lrSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
-            m_lr = v;
-            configChanged();
-        });
-        lrRow->addWidget(m_lrSpin);
-        lrRow->addWidget(makeDim(QStringLiteral("SEED")));
-        m_seedSpin = new QSpinBox;
-        m_seedSpin->setRange(0, 999999);
-        m_seedSpin->setValue(42);
-        m_seedSpin->setFixedWidth(80);
-        connect(m_seedSpin, &QSpinBox::valueChanged, [this](int v) {
-            m_seed = v;
-            configChanged();
-        });
-        lrRow->addWidget(m_seedSpin);
-        m_shuffleChk = new QCheckBox(QStringLiteral("shuffle"));
-        m_shuffleChk->setChecked(true);
-        connect(m_shuffleChk, &QCheckBox::toggled, [this](bool b) {
-            m_shuffle = b;
-            configChanged();
-        });
-        lrRow->addWidget(m_shuffleChk);
-        lrRow->addStretch(1);
-        s3->addLayout(lrRow);
-
-        auto* normRow = new QHBoxLayout;
-        normRow->setSpacing(8);
-        normRow->addWidget(makeDim(QStringLiteral("NORMALIZE")));
+        // Normalize
+        auto* nCol = new QVBoxLayout;
+        nCol->setSpacing(4);
+        auto* nLbl = new QLabel(QStringLiteral("NORMALIZE"));
+        nLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        nCol->addWidget(nLbl);
         m_normCombo = new QComboBox;
         m_normCombo->addItems({QStringLiteral("None"), QStringLiteral("MaxAbs"), QStringLiteral("MinMax")});
         m_normCombo->setCurrentIndex(1);
@@ -1507,21 +1553,93 @@ private:
             m_normMode = i;
             configChanged();
         });
-        normRow->addWidget(m_normCombo);
-        normRow->addStretch(1);
-        s3->addLayout(normRow);
+        nCol->addWidget(m_normCombo);
+        paramGrid->addLayout(nCol, 0, 1);
+
+        // Learning Rate
+        auto* lrCol = new QVBoxLayout;
+        lrCol->setSpacing(4);
+        auto* lrLbl = new QLabel(QStringLiteral("LEARNING RATE"));
+        lrLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        lrCol->addWidget(lrLbl);
+        m_lrSpin = new QDoubleSpinBox;
+        m_lrSpin->setRange(0.0001, 1.0);
+        m_lrSpin->setDecimals(4);
+        m_lrSpin->setSingleStep(0.005);
+        m_lrSpin->setValue(0.05);
+        connect(m_lrSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+            m_lr = v;
+            configChanged();
+        });
+        lrCol->addWidget(m_lrSpin);
+        paramGrid->addLayout(lrCol, 1, 0);
+
+        // Seed
+        auto* sCol = new QVBoxLayout;
+        sCol->setSpacing(4);
+        auto* sLbl = new QLabel(QStringLiteral("SEED"));
+        sLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        sCol->addWidget(sLbl);
+        m_seedSpin = new QSpinBox;
+        m_seedSpin->setRange(0, 999999);
+        m_seedSpin->setValue(42);
+        connect(m_seedSpin, &QSpinBox::valueChanged, [this](int v) {
+            m_seed = v;
+            configChanged();
+        });
+        sCol->addWidget(m_seedSpin);
+        paramGrid->addLayout(sCol, 1, 1);
+
+        trainCardLay->addLayout(paramGrid);
+
+        // Shuffle checkbox row
+        auto* shufRow = new QHBoxLayout;
+        m_shuffleChk = new QCheckBox(QStringLiteral("Shuffle dataset samples every epoch"));
+        m_shuffleChk->setChecked(true);
+        m_shuffleChk->setStyleSheet(QStringLiteral("color:#C9CDD8; font-size:11px;"));
+        connect(m_shuffleChk, &QCheckBox::toggled, [this](bool b) {
+            m_shuffle = b;
+            configChanged();
+        });
+        shufRow->addWidget(m_shuffleChk);
+        shufRow->addStretch(1);
+        trainCardLay->addLayout(shufRow);
+
+        s3->addWidget(trainCard);
 
         // 4. loss & optimizer (§7, §8) — collapsed by default; warnings stay
         // visible below the section so they are never hidden with it.
         auto* sec4 = new CollapsibleSection(QStringLiteral("4. LOSS & OPTIMIZER"), false, m_configBox);
         lv->addWidget(sec4);
         QVBoxLayout* s4 = sec4->content();
-        auto* lossRow = new QHBoxLayout;
-        lossRow->setSpacing(4);
+
+        auto* optCard = new QFrame;
+        optCard->setStyleSheet(QStringLiteral("background:#141824; border:1px solid #1E2333; border-radius:8px;"));
+        auto* optCardLay = new QVBoxLayout(optCard);
+        optCardLay->setContentsMargins(12, 12, 12, 12);
+        optCardLay->setSpacing(10);
+
+        // Loss selector
+        auto* lossLbl = new QLabel(QStringLiteral("LOSS FUNCTION"));
+        lossLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        optCardLay->addWidget(lossLbl);
+
+        auto* lossWell = new QFrame;
+        lossWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        auto* lossWellLay = new QHBoxLayout(lossWell);
+        lossWellLay->setContentsMargins(2, 2, 2, 2);
+        lossWellLay->setSpacing(2);
         for (int i = 0; i < 3; ++i) {
-            QPushButton* b = makeBtn(QString::fromLatin1(kLossLabels[i]));
+            QPushButton* b = new QPushButton(QString::fromLatin1(kLossLabels[i]));
+            b->setCheckable(true);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setFixedHeight(28);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            lossRow->addWidget(b);
+            b->setStyleSheet(QStringLiteral(
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:600; }"
+                "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
+                "QPushButton:checked { background:#2563EB; color:#FFFFFF; font-weight:bold; }"));
+            lossWellLay->addWidget(b);
             m_lossBtns.push_back(b);
         }
         setExclusive(m_lossBtns);
@@ -1531,13 +1649,29 @@ private:
                 configChanged();
             });
         }
-        s4->addLayout(lossRow);
-        auto* optRow = new QHBoxLayout;
-        optRow->setSpacing(4);
+        optCardLay->addWidget(lossWell);
+
+        // Optimizer selector
+        auto* optLbl = new QLabel(QStringLiteral("OPTIMIZER"));
+        optLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        optCardLay->addWidget(optLbl);
+
+        auto* optWell = new QFrame;
+        optWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        auto* optWellLay = new QHBoxLayout(optWell);
+        optWellLay->setContentsMargins(2, 2, 2, 2);
+        optWellLay->setSpacing(2);
         for (int i = 0; i < 3; ++i) {
-            QPushButton* b = makeBtn(QString::fromLatin1(kOptLabels[i]));
+            QPushButton* b = new QPushButton(QString::fromLatin1(kOptLabels[i]));
+            b->setCheckable(true);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setFixedHeight(28);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            optRow->addWidget(b);
+            b->setStyleSheet(QStringLiteral(
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:600; }"
+                "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
+                "QPushButton:checked { background:#2563EB; color:#FFFFFF; font-weight:bold; }"));
+            optWellLay->addWidget(b);
             m_optBtns.push_back(b);
         }
         setExclusive(m_optBtns);
@@ -1548,54 +1682,68 @@ private:
                 configChanged();
             });
         }
-        s4->addLayout(optRow);
+        optCardLay->addWidget(optWell);
 
         m_muRow = new QWidget;
         auto* muLay = new QHBoxLayout(m_muRow);
         muLay->setContentsMargins(0, 0, 0, 0);
         muLay->setSpacing(8);
-        muLay->addWidget(makeDim(QStringLiteral("MOMENTUM")));
+        auto* muLbl = new QLabel(QStringLiteral("Momentum"));
+        muLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:600;"));
+        muLay->addWidget(muLbl);
         m_muSpin = new QDoubleSpinBox;
         m_muSpin->setRange(0.0, 0.999);
         m_muSpin->setDecimals(3);
         m_muSpin->setSingleStep(0.05);
         m_muSpin->setValue(0.9);
-        m_muSpin->setFixedWidth(80);
         connect(m_muSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
             m_momentum = v;
             configChanged();
         });
-        muLay->addWidget(m_muSpin);
-        muLay->addStretch(1);
-        s4->addWidget(m_muRow);
+        muLay->addWidget(m_muSpin, 1);
+        optCardLay->addWidget(m_muRow);
 
         m_adamRow = new QWidget;
         auto* adLay = new QHBoxLayout(m_adamRow);
         adLay->setContentsMargins(0, 0, 0, 0);
-        adLay->setSpacing(6);
-        adLay->addWidget(makeDim(QStringLiteral("B1")));
+        adLay->setSpacing(8);
+        auto* b1Col = new QVBoxLayout;
+        b1Col->setSpacing(3);
+        auto* b1Lbl = new QLabel(QStringLiteral("β1"));
+        b1Lbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700;"));
+        b1Col->addWidget(b1Lbl);
         m_b1Spin = new QDoubleSpinBox;
         m_b1Spin->setRange(0.5, 0.9999);
         m_b1Spin->setDecimals(4);
         m_b1Spin->setValue(0.9);
-        m_b1Spin->setFixedWidth(76);
         connect(m_b1Spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
             m_beta1 = v;
             configChanged();
         });
-        adLay->addWidget(m_b1Spin);
-        adLay->addWidget(makeDim(QStringLiteral("B2")));
+        b1Col->addWidget(m_b1Spin);
+        adLay->addLayout(b1Col);
+
+        auto* b2Col = new QVBoxLayout;
+        b2Col->setSpacing(3);
+        auto* b2Lbl = new QLabel(QStringLiteral("β2"));
+        b2Lbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700;"));
+        b2Col->addWidget(b2Lbl);
         m_b2Spin = new QDoubleSpinBox;
         m_b2Spin->setRange(0.9, 0.99999);
         m_b2Spin->setDecimals(5);
         m_b2Spin->setValue(0.999);
-        m_b2Spin->setFixedWidth(82);
         connect(m_b2Spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
             m_beta2 = v;
             configChanged();
         });
-        adLay->addWidget(m_b2Spin);
-        adLay->addWidget(makeDim(QStringLiteral("EPS")));
+        b2Col->addWidget(m_b2Spin);
+        adLay->addLayout(b2Col);
+
+        auto* epsCol = new QVBoxLayout;
+        epsCol->setSpacing(3);
+        auto* epsLbl = new QLabel(QStringLiteral("ε"));
+        epsLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700;"));
+        epsCol->addWidget(epsLbl);
         m_epsCombo = new QComboBox;
         m_epsCombo->addItems({QStringLiteral("1e-6"), QStringLiteral("1e-7"),
                               QStringLiteral("1e-8"), QStringLiteral("1e-9")});
@@ -1604,9 +1752,12 @@ private:
             m_eps = std::pow(10.0, -6 - i);
             configChanged();
         });
-        adLay->addWidget(m_epsCombo);
-        adLay->addStretch(1);
-        s4->addWidget(m_adamRow);
+        epsCol->addWidget(m_epsCombo);
+        adLay->addLayout(epsCol);
+
+        optCardLay->addWidget(m_adamRow);
+
+        s4->addWidget(optCard);
 
         // Warnings live outside the collapsed box so they are never hidden.
         m_warnLbl = new QLabel;
@@ -2717,6 +2868,20 @@ private:
         m_muRow->setVisible(m_opt == OPT_MOMENTUM);
         m_adamRow->setVisible(m_opt == OPT_ADAM);
     }
+
+public:
+    void selectTab(const std::string& name) {
+        if (name == "acc") { m_view = VIEW_ACC; syncTabs(); }
+        else if (name == "boundary" || name == "bnd") { m_view = VIEW_BOUNDARY; syncTabs(); }
+        else if (name == "network" || name == "net") { m_view = VIEW_NETWORK; syncTabs(); }
+        else { m_view = VIEW_LOSS; syncTabs(); }
+    }
+
+    void scrollConfig(int val) {
+        if (m_cfgScroll && m_cfgScroll->verticalScrollBar()) {
+            m_cfgScroll->verticalScrollBar()->setValue(val);
+        }
+    }
 };
 
 int main(int argc, char* argv[]) {
@@ -2729,13 +2894,24 @@ int main(int argc, char* argv[]) {
     w.show();
     // Test hook (no moc needed): --shot <png> --dump <txt> renders the live
     // window offscreen state to disk after startup settles, then quits.
-    QString shotPath, dumpPath;
+    QString shotPath, dumpPath, tabArg;
+    int scrollArg = -1;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--shot" && i + 1 < argc) shotPath = QString::fromLocal8Bit(argv[++i]);
         if (std::string(argv[i]) == "--dump" && i + 1 < argc) dumpPath = QString::fromLocal8Bit(argv[++i]);
+        if (std::string(argv[i]) == "--tab" && i + 1 < argc) tabArg = QString::fromLocal8Bit(argv[++i]);
+        if (std::string(argv[i]) == "--scroll" && i + 1 < argc) scrollArg = std::atoi(argv[++i]);
+    }
+    if (!tabArg.isEmpty()) {
+        w.selectTab(tabArg.toStdString());
+    }
+    if (scrollArg >= 0) {
+        w.scrollConfig(scrollArg);
     }
     if (!shotPath.isEmpty() || !dumpPath.isEmpty()) {
-        QTimer::singleShot(2000, [&]() {
+        QTimer::singleShot(1500, [&, tabArg, scrollArg]() {
+            if (!tabArg.isEmpty()) w.selectTab(tabArg.toStdString());
+            if (scrollArg >= 0) w.scrollConfig(scrollArg);
             if (!dumpPath.isEmpty()) w.dumpDebug(dumpPath);
             if (!shotPath.isEmpty()) w.grab().save(shotPath);
             app.quit();
