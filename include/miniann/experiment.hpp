@@ -35,7 +35,7 @@ struct ExperimentConfig {
     bool shuffle = true;
     // -- network --
     std::vector<int> hidden = {8, 8};
-    std::vector<std::string> hiddenActs = {"tanh", "relu"};
+    std::vector<std::string> hiddenActs = {"tanh", "tanh"};
     std::string outputAct = "sigmoid";
     // -- training --
     std::string loss = "mse";

@@ -9,6 +9,14 @@ REM Qt6 note: needs MSYS2 mingw-w64-ucrt-x86_64-qt6-base installed.
 REM No moc step required: demos\gui_qt.cpp uses no Q_OBJECT.
 REM ========================================================
 
+REM Auto-select a UCRT g++ when one is installed (Qt6 DLLs are UCRT builds;
+REM an MSVCRT-built gui_qt.exe segfaults in <fstream> while loading CSVs,
+REM e.g. the Iris dataset. A UCRT g++ already first on PATH is left alone.
+for /d %%D in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_*") do (
+    if exist "%%~D\mingw64\bin\g++.exe" set "PATH=%%~D\mingw64\bin;%PATH%"
+)
+g++ --version | findstr /i "ucrt" >nul && echo [toolchain] UCRT g++ selected || echo [toolchain] WARNING: no UCRT g++ found, using default g++ (Qt GUI may be unstable)
+
 set INCL=-Iinclude
 set FLAGS=-std=c++17 -O2 -Wall -Wextra -Wpedantic -static-libstdc++ -static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic
 REM Static runtime: exes never depend on PATH-ordered MinGW DLLs (a second Qt

@@ -46,6 +46,73 @@ Dataset oneHot(const Dataset& raw, int k) {
     return d;
 }
 
+// Stratified 3-way split for classification data: shuffles within each
+// class (one shared rng, so the split is deterministic per seed) and takes
+// a proportional train/val/test slice of every class. With Iris (10/class,
+// 80/10/10) this yields exactly 8/1/1 per class, so val/test always contain
+// all classes. A pure random split of 30 rows into 24/3/3 routinely leaves
+// whole classes out of val/test (e.g. val={2,0,1} with zero class-1 rows),
+// making val/test accuracy jump in 33% steps of pure noise.
+std::tuple<Dataset, Dataset, Dataset> stratifiedSplit(const Dataset& raw, int numClasses,
+                                                      double trainFrac, double valFrac,
+                                                      unsigned seed) {
+    std::vector<std::vector<std::size_t>> byClass{std::size_t(numClasses)};
+    for (std::size_t i = 0; i < raw.size(); ++i) {
+        int c = int(raw.target(i)[0]);
+        if (c < 0 || c >= numClasses)
+            throw std::runtime_error("stratifiedSplit: class label out of range");
+        byClass[std::size_t(c)].push_back(i);
+    }
+    std::mt19937 rng(seed);
+    Dataset tr, va, te;
+    bool first = true;
+    for (int c = 0; c < numClasses; ++c) {
+        auto& idx = byClass[std::size_t(c)];
+        if (idx.empty()) continue;
+        std::shuffle(idx.begin(), idx.end(), rng);
+        std::size_t n = idx.size();
+        std::size_t nTrain = std::size_t(double(n) * trainFrac);
+        std::size_t nVal = (valFrac > 0.0) ? std::size_t(double(n) * valFrac) : 0;
+        if (n >= 3) {
+            if (nTrain == 0) nTrain = 1;
+            if (valFrac > 0.0 && nVal == 0) nVal = 1;
+            while (nTrain + nVal >= n) {
+                if (nVal > 0) --nVal;
+                else if (nTrain > 1) --nTrain;
+                else break;
+            }
+        } else {
+            if (nTrain >= n) nTrain = n > 0 ? n - 1 : 0;
+            nVal = 0;
+            if (nTrain + nVal >= n && nVal > 0) nVal = 0;
+        }
+        for (std::size_t k = 0; k < idx.size(); ++k) {
+            const Vector& x = raw.input(idx[k]);
+            const Vector& t = raw.target(idx[k]);
+            if (first && (x.size() == 0 || t.size() == 0))
+                throw std::runtime_error("stratifiedSplit: zero dimension");
+            if (k < nTrain) tr.add(x, t);
+            else if (k < nTrain + nVal) va.add(x, t);
+            else te.add(x, t);
+        }
+        first = false;
+    }
+    if (tr.size() == 0 || te.size() == 0)
+        throw std::invalid_argument("stratifiedSplit: split leaves an empty part");
+    if (valFrac > 0.0 && va.size() == 0)
+        throw std::invalid_argument("stratifiedSplit: split leaves validation empty");
+    return {tr, va, te};
+}
+
+// ReLU-family activations need He initialization (variance scaled by fan-in);
+// sigmoid/tanh/linear train best from Xavier. Using Xavier under ReLU is a
+// classic cause of dead neurons and seed-dependent collapse (e.g. Iris stuck
+// at 33% predicting a single class).
+WeightInit initForActivation(const std::string& act) {
+    if (act == "relu" || act == "leaky_relu" || act == "swish") return WeightInit::He;
+    return WeightInit::Xavier;
+}
+
 // Fit normalization on the TRAIN inputs only, apply to every split.
 struct NormStats {
     int mode = 0;
@@ -59,10 +126,18 @@ NormStats fitNorm(const Dataset& train, int mode) {
     if (train.size() == 0 || mode == 0) return st;
     std::size_t dim = train.input(0).size();
     if (mode == 1) {
-        double m = 0.0;
-        for (std::size_t i = 0; i < train.size(); ++i)
-            for (double v : train.input(i)) m = std::max(m, std::abs(v));
-        st.scale = Vector(dim, m == 0.0 ? 1.0 : m);
+        // Per-feature max-abs: each feature is scaled by its own peak so
+        // small-magnitude features (e.g. Iris petal width 0.1..2.5) keep a
+        // usable signal instead of being squashed by the global maximum
+        // (e.g. sepal length ~7.9). Fit on TRAIN inputs only.
+        st.scale.assign(dim, 0.0);
+        for (std::size_t i = 0; i < train.size(); ++i) {
+            const Vector& x = train.input(i);
+            for (std::size_t j = 0; j < dim; ++j)
+                st.scale[j] = std::max(st.scale[j], std::abs(x[j]));
+        }
+        for (std::size_t j = 0; j < dim; ++j)
+            if (st.scale[j] == 0.0) st.scale[j] = 1.0;
     } else {
         st.lo = train.input(0);
         st.hi = train.input(0);
@@ -138,8 +213,10 @@ PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
     }
     raw.validate();
 
-    // Label encoding: single-output integer targets 0..K-1 become one-hot
+    // Label encoding: single-output integer targets 0..K-1 are detected here
     // (multiclass CSV/Iris); {0,1} stays binary; anything else is regression.
+    // Detection happens BEFORE splitting so the split can be stratified by
+    // class; one-hot encoding is applied to each split afterwards.
     std::size_t classes = 0;
     bool discrete = false;
     if (raw.target(0).size() == 1) {
@@ -152,7 +229,6 @@ PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
             if ((std::size_t)k == vals.size() && k >= 2 && k <= 32) {
                 classes = std::size_t(k);
                 discrete = true;
-                if (k > 2) raw = oneHot(raw, k);
             }
         }
     } else {
@@ -164,19 +240,41 @@ PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
     d.name = name;
     d.samples = raw.size();
     d.inDim = raw.input(0).size();
-    d.outDim = raw.target(0).size();
     d.features = d.inDim;
     d.classes = classes;
     d.discreteClasses = discrete;
+
+    auto encodePart = [&](const Dataset& part) -> Dataset {
+        if (discrete && classes > 2 && part.size() > 0 && part.target(0).size() == 1)
+            return oneHot(part, int(classes));
+        return part;
+    };
+    // Output dim is known before splitting when integer labels are present.
+    d.outDim = (discrete && classes > 2) ? classes : raw.target(0).size();
 
     if (raw.size() <= 8) {
         // Tiny truth tables: a held-out split would leave a 1-sample test
         // set (pure noise). Train and evaluate on the full table instead.
         d.tiny = true;
-        NormStats st = fitNorm(raw, cfg.normMode);
-        d.train = normDataset(raw, st);
+        Dataset enc = encodePart(raw);
+        NormStats st = fitNorm(enc, cfg.normMode);
+        d.train = normDataset(enc, st);
         d.test = d.train;
         d.hasVal = false;
+    } else if (discrete && classes >= 2 && raw.target(0).size() == 1) {
+        // Classification data with integer labels: stratified split keeps
+        // every class proportionally present in train/val/test. A pure
+        // random split of 30 Iris rows into 24/3/3 routinely leaves whole
+        // classes out of val/test, making those accuracies pure noise.
+        auto parts = stratifiedSplit(raw, int(classes), cfg.trainFrac, cfg.valFrac, cfg.seed);
+        Dataset tr = encodePart(std::get<0>(parts));
+        Dataset va = encodePart(std::get<1>(parts));
+        Dataset te = encodePart(std::get<2>(parts));
+        NormStats st = fitNorm(tr, cfg.normMode);
+        d.train = normDataset(tr, st);
+        d.val = normDataset(va, st);
+        d.test = normDataset(te, st);
+        d.hasVal = true;
     } else {
         auto parts = raw.splitTrainValTest(cfg.trainFrac, cfg.valFrac, cfg.seed);
         NormStats st = fitNorm(std::get<0>(parts), cfg.normMode);
@@ -269,11 +367,12 @@ ExperimentResult ExperimentController::run(const ExperimentConfig& cfg, Training
         for (std::size_t l = 0; l < cfg.hidden.size(); ++l) {
             net.addLayer(Layer(std::size_t(cfg.hidden[l]), prev,
                                ActivationFactory::create(cfg.hiddenActs[l]),
-                               rng, WeightInit::Xavier));
+                               rng, initForActivation(cfg.hiddenActs[l])));
             prev = std::size_t(cfg.hidden[l]);
         }
         net.addLayer(Layer(res.data.outDim, prev,
-                           ActivationFactory::create(cfg.outputAct), rng, WeightInit::Xavier));
+                           ActivationFactory::create(cfg.outputAct),
+                           rng, initForActivation(cfg.outputAct)));
 
         auto loss = LossFactory::create(cfg.loss);
         auto opt = OptimizerFactory::create(cfg.optimizer, cfg.opt);

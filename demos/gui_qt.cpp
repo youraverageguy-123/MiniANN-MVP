@@ -758,8 +758,9 @@ public:
         m_head->setMinimumHeight(28);
         m_head->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         m_head->setStyleSheet(QStringLiteral(
-            "QPushButton { text-align: left; border: none; color: #E8EAF0; }"
-            "QPushButton:hover { background: #1B1E2B; }"));
+            "QPushButton { text-align: left; background:#151722; border:1px solid #232738;"
+            " border-radius:2px; padding:4px 8px; color:#E8EAF0; }"
+            "QPushButton:hover { background:#1B1E2B; border:1px solid #2E3448; }"));
         QFont hf = m_head->font();
         hf.setPointSize(10);
         hf.setBold(true);
@@ -767,6 +768,13 @@ public:
         connect(m_head, &QPushButton::clicked, [this]() { setExpanded(!m_expanded); });
         outer->addWidget(m_head);
         m_body = new QWidget;
+        // Explicit backdrop, same color as the surrounding card: plain
+        // containers otherwise let the light Fusion default show through
+        // layout gaps and label margins (the pale boxes). Inline style, so
+        // no other widget is touched; background does not inherit, so all
+        // children keep their own styling. Pixel-identical anywhere that
+        // already rendered dark.
+        m_body->setStyleSheet(QStringLiteral("background:#13151F; border:none;"));
         m_lay = new QVBoxLayout(m_body);
         m_lay->setContentsMargins(0, 0, 0, 0);
         m_lay->setSpacing(10);
@@ -1159,6 +1167,9 @@ private:
         outer->setContentsMargins(20, 18, 20, 18);
         outer->setSpacing(10);
         m_configBox = new QWidget;
+        // Same explicit backdrop as the section bodies (see CollapsibleSection):
+        // covers the scroll viewport behind the whole column.
+        m_configBox->setStyleSheet(QStringLiteral("background:#13151F; border:none;"));
         auto* lv = new QVBoxLayout(m_configBox);
         lv->setContentsMargins(0, 0, 0, 0);
         lv->setSpacing(10);
@@ -1212,12 +1223,23 @@ private:
         }
         s1->addLayout(dsRow);
 
-        // dataset info (§3.2)
+        // dataset info (§3.2) — wrapped in a real panel frame so the
+        // QFrame#panel card style actually applies. A bare QLabel never
+        // matches that selector, which is why this rendered as naked text.
+        auto* dsInfoPanel = new QFrame;
+        dsInfoPanel->setObjectName(QStringLiteral("panel"));
+        // Inline (not via the QFrame#panel selector): guaranteed to apply.
+        // Colors reused from the button palette — no new theme colors.
+        dsInfoPanel->setStyleSheet(QStringLiteral(
+            "background:#1B1E2B; border:1px solid #2E3448; border-radius:4px;"));
+        auto* dsInfoLay = new QVBoxLayout(dsInfoPanel);
+        dsInfoLay->setContentsMargins(12, 10, 12, 10);
+        dsInfoLay->setSpacing(0);
         m_dsInfoLbl = new QLabel;
-        m_dsInfoLbl->setObjectName(QStringLiteral("panel"));
-        m_dsInfoLbl->setStyleSheet(QStringLiteral("color:#7FB3E8; padding:8px 12px;"));
+        m_dsInfoLbl->setStyleSheet(QStringLiteral("color:#7FB3E8;"));
         m_dsInfoLbl->setWordWrap(true);
-        s1->addWidget(m_dsInfoLbl);
+        dsInfoLay->addWidget(m_dsInfoLbl);
+        s1->addWidget(dsInfoPanel);
 
         // CSV options row
         m_csvRow = new QWidget;
@@ -1283,15 +1305,24 @@ private:
         layRow->addWidget(layPlus);
         layRow->addStretch(1);
         s2->addLayout(layRow);
+        // Architecture summary panel (same card treatment as dataset info).
+        auto* archPanel = new QFrame;
+        archPanel->setObjectName(QStringLiteral("panel"));
+        archPanel->setStyleSheet(QStringLiteral(
+            "background:#1B1E2B; border:1px solid #2E3448; border-radius:4px;"));
+        auto* archLay = new QVBoxLayout(archPanel);
+        archLay->setContentsMargins(12, 10, 12, 10);
+        archLay->setSpacing(4);
         m_archLbl = new QLabel;
         m_archLbl->setStyleSheet(QStringLiteral("color:#7FB3E8;"));
         m_archLbl->setWordWrap(true);
-        s2->addWidget(m_archLbl);
+        archLay->addWidget(m_archLbl);
         // Hidden-layer detail lives in a popup (1-8 layers without clutter).
         m_hiddenSumLbl = new QLabel;
         m_hiddenSumLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
         m_hiddenSumLbl->setWordWrap(true);
-        s2->addWidget(m_hiddenSumLbl);
+        archLay->addWidget(m_hiddenSumLbl);
+        s2->addWidget(archPanel);
         m_hiddenCfgBtn = makeBtn(QStringLiteral("Configure hidden layers…"));
         m_hiddenCfgBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         connect(m_hiddenCfgBtn, &QPushButton::clicked, [this]() { openHiddenDialog(); });
@@ -1871,7 +1902,8 @@ private:
             m_epochSpin->blockSignals(false);
         }
 
-        refreshPreview();
+        // (Preview was already refreshed above; its fingerprint cache makes
+        // a second call here a no-op, so don't pay for it twice.)
         if (!m_previewErr.empty()) {
             m_state = ST_ERROR;
             m_dsInfoLbl->setText(QString::fromStdString(std::string("Dataset error:\n") + m_previewErr));
@@ -1958,6 +1990,11 @@ private:
     QString m_cEpoch, m_cLoss, m_cTrAcc, m_cValAcc, m_cTeAcc, m_cProg;
     QString m_cSum, m_cSumBar, m_cSumStyle, m_cTrainTxt, m_cTrainObj;
     int m_cBadge = -1, m_cCfgEn = -1, m_cSaveEn = -1, m_cTrainEn = -1;
+    // Plot repaint gate: history vectors only ever append, so equal
+    // lengths + same view + same epoch means pixel-identical output.
+    // (Init to impossible values so the very first tick always paints.)
+    std::size_t m_cPlotA = (std::size_t)-1, m_cPlotB = (std::size_t)-1;
+    int m_cPlotV = -1, m_cPlotE = -1;
 
     static void setOnce(QLabel* l, QString& cache, const QString& s) {
         if (s != cache) {
@@ -2108,9 +2145,21 @@ private:
             setSaveEnabled(false);
         }
 
-        m_plot->setCurves(m_view == VIEW_ACC ? trainAcc : trainLoss,
-                          m_view == VIEW_ACC ? valAcc : valLoss,
-                          m_view == VIEW_ACC, !valLoss.empty() || !valAcc.empty(), liveEpoch);
+        // Copying multi-hundred-thousand-point curves and repainting on
+        // every 100 ms tick — including fully idle windows — caused the
+        // flicker the caches above were built to prevent. Repaint only when
+        // new epochs actually streamed in (or the view switched).
+        std::size_t keyA = trainLoss.size() + trainAcc.size();
+        std::size_t keyB = valLoss.size() + valAcc.size();
+        if (keyA != m_cPlotA || keyB != m_cPlotB || m_view != m_cPlotV || liveEpoch != m_cPlotE) {
+            m_cPlotA = keyA;
+            m_cPlotB = keyB;
+            m_cPlotV = m_view;
+            m_cPlotE = liveEpoch;
+            m_plot->setCurves(m_view == VIEW_ACC ? trainAcc : trainLoss,
+                              m_view == VIEW_ACC ? valAcc : valLoss,
+                              m_view == VIEW_ACC, !valLoss.empty() || !valAcc.empty(), liveEpoch);
+        }
     }
 
     void freezeHeader(const QString& na) {
@@ -2504,14 +2553,17 @@ private:
         if (refresh) configChanged();
     }
     void applyPresetIris() {
+        // Mirrors demos/iris_demo.cpp (4-6-3 tanh/sigmoid, Adam 0.01, batch 8):
+        // the proven-stable Iris setup. Deeper ReLU stacks collapsed to 33%
+        // on some seeds with only 24 training rows.
         m_dataset = DS_IRIS;
-        m_hidden = {{8, ACT_RELU}, {8, ACT_RELU}};
+        m_hidden = {{6, ACT_TANH}};
         m_outputAct = "sigmoid";
         m_loss = LOSS_CCE;
         m_opt = OPT_ADAM;
         m_lr = 0.01;
-        m_epochsTarget = 2000;
-        m_batchIdx = 2; // 16
+        m_epochsTarget = 1500;
+        m_batchIdx = 1; // 8
         m_seed = 42;
         m_shuffle = true;
         m_normMode = 1;
