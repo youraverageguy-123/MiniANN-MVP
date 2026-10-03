@@ -102,9 +102,15 @@ void Momentum::step(NeuralNetwork& net, std::size_t batchSize) {
 }
 
 std::unique_ptr<IOptimizer> OptimizerFactory::create(const std::string& name, double lr) {
-    if (name == "sgd") return std::make_unique<SGD>(lr);
-    if (name == "momentum") return std::make_unique<Momentum>(lr);
-    if (name == "adam") return std::make_unique<Adam>(lr);
+    OptimizerConfig cfg;
+    cfg.learningRate = lr;
+    return create(name, cfg);
+}
+
+std::unique_ptr<IOptimizer> OptimizerFactory::create(const std::string& name, const OptimizerConfig& cfg) {
+    if (name == "sgd") return std::make_unique<SGD>(cfg.learningRate);
+    if (name == "momentum") return std::make_unique<Momentum>(cfg.learningRate, cfg.momentum);
+    if (name == "adam") return std::make_unique<Adam>(cfg.learningRate, cfg.beta1, cfg.beta2, cfg.epsilon);
     throw std::invalid_argument("OptimizerFactory: unknown optimizer '" + name +
                                 "' (choose sgd|momentum|adam)");
 }

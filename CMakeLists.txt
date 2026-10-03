@@ -20,6 +20,7 @@ add_library(miniann
   src/logger.cpp
   src/serializer.cpp
   src/visualizer.cpp
+  src/experiment.cpp
 )
 
 add_executable(xor_demo demos/xor_demo.cpp)
@@ -45,3 +46,17 @@ target_link_libraries(test_basic miniann)
 
 add_executable(test_choices tests/test_choices.cpp)
 target_link_libraries(test_choices miniann)
+
+add_executable(test_training tests/test_training.cpp)
+target_link_libraries(test_training miniann)
+
+# Optional native GUI: only built when Qt6 Widgets are available, so plain
+# `cmake -B build && cmake --build build` keeps working without them.
+# (demos/gui_qt.cpp uses no Q_OBJECT, so no AUTOMOC handling is needed.)
+find_package(Qt6 QUIET COMPONENTS Widgets)
+if(Qt6Widgets_FOUND)
+  add_executable(gui_qt demos/gui_qt.cpp)
+  target_link_libraries(gui_qt miniann Qt6::Widgets)
+else()
+  message(STATUS "Qt6 Widgets not found - skipping gui_qt (install Qt6 to enable the GUI)")
+endif()

@@ -44,6 +44,29 @@ std::pair<Dataset, Dataset> Dataset::split(double trainFraction, std::mt19937& r
     return {tr, te};
 }
 
+std::tuple<Dataset, Dataset, Dataset>
+Dataset::splitTrainValTest(double trainFraction, double valFraction, unsigned seed) const {
+    if (inputs_.empty()) throw std::runtime_error("Dataset::splitTrainValTest: empty dataset");
+    if (trainFraction <= 0.0 || trainFraction >= 1.0 || valFraction < 0.0 || valFraction >= 1.0 ||
+        trainFraction + valFraction >= 1.0)
+        throw std::invalid_argument("Dataset::splitTrainValTest: need train>0, val>=0, train+val<1");
+    std::vector<std::size_t> idx(inputs_.size());
+    for (std::size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+    std::mt19937 rng(seed);
+    std::shuffle(idx.begin(), idx.end(), rng);
+    std::size_t nTrain = std::size_t(double(inputs_.size()) * trainFraction);
+    std::size_t nVal = std::size_t(double(inputs_.size()) * valFraction);
+    if (nTrain == 0 || nVal == 0 || nTrain + nVal >= inputs_.size())
+        throw std::invalid_argument("Dataset::splitTrainValTest: split leaves an empty part");
+    Dataset tr, va, te;
+    for (std::size_t k = 0; k < idx.size(); ++k) {
+        if (k < nTrain) tr.add(inputs_[idx[k]], targets_[idx[k]]);
+        else if (k < nTrain + nVal) va.add(inputs_[idx[k]], targets_[idx[k]]);
+        else te.add(inputs_[idx[k]], targets_[idx[k]]);
+    }
+    return {tr, va, te};
+}
+
 void Dataset::validate() const {
     if (inputs_.empty()) throw std::runtime_error("Dataset::validate: empty dataset");
     std::size_t ni = inputs_[0].size(), nt = targets_[0].size();

@@ -1,58 +1,70 @@
 @echo off
 REM ========================================================
-REM Build MiniANN MVP & Raylib GUI Demo
+REM Build MiniANN MVP and Qt Widgets GUI (two-stage: lib once, link each)
+REM Qt6 note: needs MSYS2 mingw-w64-ucrt-x86_64-qt6-base installed.
+REM No moc step required: demos\gui_qt.cpp uses no Q_OBJECT.
 REM ========================================================
 
 set INCL=-Iinclude
-set SRC=src\activation.cpp src\neuron.cpp src\layer.cpp src\network.cpp src\loss.cpp src\optimizer.cpp src\trainer.cpp src\dataset.cpp src\metrics.cpp src\logger.cpp src\serializer.cpp src\visualizer.cpp
 set FLAGS=-std=c++17 -O2 -Wall -Wextra -Wpedantic
-set RAYLIB_LIBS=-lraylib -lopengl32 -lgdi32 -lwinmm
+set QTINC=-IC:/msys64/ucrt64/include/qt6 -IC:/msys64/ucrt64/include/qt6/QtWidgets -IC:/msys64/ucrt64/include/qt6/QtGui -IC:/msys64/ucrt64/include/qt6/QtCore -DQT_WIDGETS_LIB -DQT_GUI_LIB -DQT_CORE_LIB
+set QTLIBS=-mwindows -LC:/msys64/ucrt64/lib -lQt6Widgets -lQt6Gui -lQt6Core
 
-echo [1/9] Building xor_demo.exe...
-g++ %FLAGS% %INCL% %SRC% demos\xor_demo.cpp -o xor_demo.exe
+if not exist obj mkdir obj
+
+echo Compiling MiniANN library (once, reused by all targets)...
+for %%f in (src\activation.cpp src\neuron.cpp src\layer.cpp src\network.cpp src\loss.cpp src\optimizer.cpp src\trainer.cpp src\dataset.cpp src\metrics.cpp src\logger.cpp src\serializer.cpp src\visualizer.cpp src\experiment.cpp) do (
+    g++ %FLAGS% %INCL% -c %%f -o obj\%%~nf.o
+    if errorlevel 1 exit /b 1
+)
+set LIB=obj\*.o
+
+echo [1/10] Building xor_demo.exe...
+g++ %FLAGS% %INCL% %LIB% demos\xor_demo.cpp -o xor_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [2/9] Building and_or_demo.exe...
-g++ %FLAGS% %INCL% %SRC% demos\and_or_demo.cpp -o and_or_demo.exe
+echo [2/10] Building and_or_demo.exe...
+g++ %FLAGS% %INCL% %LIB% demos\and_or_demo.cpp -o and_or_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [3/9] Building iris_demo.exe...
-g++ %FLAGS% %INCL% %SRC% demos\iris_demo.cpp -o iris_demo.exe
+echo [3/10] Building iris_demo.exe...
+g++ %FLAGS% %INCL% %LIB% demos\iris_demo.cpp -o iris_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [4/9] Building compare_demo.exe...
-g++ %FLAGS% %INCL% %SRC% demos\compare_demo.cpp -o compare_demo.exe
+echo [4/10] Building compare_demo.exe...
+g++ %FLAGS% %INCL% %LIB% demos\compare_demo.cpp -o compare_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [5/9] Building playground.exe...
-g++ %FLAGS% %INCL% %SRC% demos\playground.cpp -o playground.exe
+echo [5/10] Building playground.exe...
+g++ %FLAGS% %INCL% %LIB% demos\playground.cpp -o playground.exe
 if errorlevel 1 exit /b 1
 
-echo [6/9] Building gradient_check.exe...
-g++ %FLAGS% %INCL% %SRC% tests\gradient_check.cpp -o gradient_check.exe
+echo [6/10] Building gradient_check.exe...
+g++ %FLAGS% %INCL% %LIB% tests\gradient_check.cpp -o gradient_check.exe
 if errorlevel 1 exit /b 1
 
-echo [7/9] Building test_basic.exe...
-g++ %FLAGS% %INCL% %SRC% tests\test_basic.cpp -o test_basic.exe
+echo [7/10] Building test_basic.exe...
+g++ %FLAGS% %INCL% %LIB% tests\test_basic.cpp -o test_basic.exe
 if errorlevel 1 exit /b 1
 
-echo [8/9] Building test_choices.exe...
-g++ %FLAGS% %INCL% %SRC% tests\test_choices.cpp -o test_choices.exe
+echo [8/10] Building test_choices.exe...
+g++ %FLAGS% %INCL% %LIB% tests\test_choices.cpp -o test_choices.exe
 if errorlevel 1 exit /b 1
 
-echo [9/9] Building gui_app.exe (Raylib, optional)...
-g++ %FLAGS% %INCL% %SRC% demos\gui_app.cpp %RAYLIB_LIBS% -o gui_app.exe
+echo [9/10] Building test_training.exe...
+g++ %FLAGS% %INCL% %LIB% tests\test_training.cpp -o test_training.exe
+if errorlevel 1 exit /b 1
+
+echo [10/10] Building gui_qt.exe (Qt Widgets, optional)...
+g++ %FLAGS% %INCL% %QTINC% %LIB% demos\gui_qt.cpp %QTLIBS% -o gui_qt.exe
 if errorlevel 1 (
-    echo [WARN] Raylib GUI skipped: raylib not found.
-    echo        Core demos above built fine. To enable the GUI:
-    echo          1. Open "MSYS2 MINGW64" ^(not MSYS^) from the Start menu
-    echo          2. pacman -Syu ^&^& pacman -S mingw-w64-x86_64-raylib
-    echo          3. Re-run .\build.bat from this folder
-) else (
-    echo [OK] gui_app.exe built. Launch it with: .\gui_app.exe
+    echo [WARN] gui_qt.exe skipped - install Qt6 package mingw-w64-ucrt-x86_64-qt6-base,
+    echo        or close the running gui_qt.exe window: a locked exe cannot be relinked.
+    echo        Core library and console demos above are unaffected.
 )
 
 echo.
 echo ====================================
-echo  Core targets built successfully!
+echo  All targets built successfully!
 echo ====================================
+echo Run gui_qt.exe to launch the clickable GUI (needs Qt6).

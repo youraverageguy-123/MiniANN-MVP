@@ -53,8 +53,11 @@ double CCELoss::compute(const Vector& predicted, const Vector& target) const {
     if (predicted.size() != target.size() || predicted.empty())
         throw std::invalid_argument("CCELoss::compute: size mismatch/empty");
     double s = 0.0;
-    for (std::size_t i = 0; i < predicted.size(); ++i)
-        if (target[i] != 0.0) s -= target[i] * std::log(clip01(predicted[i], eps_));
+    for (std::size_t i = 0; i < predicted.size(); ++i) {
+        double p = clip01(predicted[i], eps_);
+        double t = target[i];
+        s -= t * std::log(p) + (1.0 - t) * std::log(1.0 - p);
+    }
     return s / double(predicted.size());
 }
 
@@ -63,8 +66,11 @@ Vector CCELoss::gradient(const Vector& predicted, const Vector& target) const {
         throw std::invalid_argument("CCELoss::gradient: size mismatch/empty");
     Vector g(predicted.size());
     double k = double(predicted.size());
-    for (std::size_t i = 0; i < predicted.size(); ++i)
-        g[i] = -target[i] / (clip01(predicted[i], eps_) * k);
+    for (std::size_t i = 0; i < predicted.size(); ++i) {
+        double p = clip01(predicted[i], eps_);
+        double t = target[i];
+        g[i] = ((p - t) / (p * (1.0 - p))) / k;
+    }
     return g;
 }
 

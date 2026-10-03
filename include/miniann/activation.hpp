@@ -66,6 +66,14 @@ public:
     std::string name() const override { return "swish"; }
 };
 
+// Identity activation for regression output layers (Linear + MSE).
+class Linear : public IActivation {
+public:
+    double activate(double z) const override { return z; }
+    double derivative(double) const override { return 1.0; }
+    std::string name() const override { return "linear"; }
+};
+
 class ActivationFactory {
 public:
     static ActivationPtr create(const std::string& name); // throws invalid_argument

@@ -26,10 +26,13 @@ struct TrainingHistory {
 
 // Streaming hook: called at the end of every epoch. Live monitors
 // (console plots, GUIs) implement this; batch training is unaffected.
+// shouldStop() is polled each epoch so a UI STOP button can cancel a run;
+// the default (never stop) keeps all existing callbacks source-compatible.
 class TrainingCallback {
 public:
     virtual ~TrainingCallback() = default;
     virtual void onEpoch(int epoch, const TrainingHistory& hist) = 0;
+    virtual bool shouldStop() const { return false; }
 };
 
 class Trainer {

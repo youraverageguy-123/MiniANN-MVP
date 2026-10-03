@@ -73,6 +73,11 @@ int main() {
             double num = (cce.compute(pp, t) - cce.compute(pm, t)) / 2e-6;
             assert(std::abs(g[i] - num) / std::max(std::abs(num), 1e-8) < 1e-6);
         }
+        // wrong classes must be pushed down (positive gradient), not ignored
+        assert(g[1] > 0.0 && g[2] > 0.0);
+        assert(g[0] < 0.0); // correct class pushed up
+        // symmetric case: -(log .5 + log .5)/2
+        assert(std::abs(cce.compute({0.5, 0.5}, {1.0, 0.0}) - 0.6931471805599453) < 1e-9);
     }
 
     std::cout << "NEW ACTIVATIONS + FACTORIES PASS\n";

@@ -60,6 +60,7 @@ MiniANN_MVP/
     iris_demo.cpp            # data/iris_small.csv, 4-6-3, Adam, confusion matrix
     compare_demo.cpp         # §13: same net, SGD vs Momentum vs Adam table
     playground.cpp           # §28: interactive dataset/arch/loss/opt/train/eval/predict
+    gui_qt.cpp               # clickable Qt Widgets GUI (optional, needs Qt6)
   tests/
     test_basic.cpp           # activations, round-trip, dim-mismatch throws
     test_choices.cpp         # LeakyReLU/Swish values + finite-diff, factory sanity
@@ -96,6 +97,11 @@ From this folder:
 .\build.bat
 ```
 
+Two-stage build: the library compiles once into `obj\`, then each demo links
+it (~20s total instead of ~9x recompiling). Close `gui_qt.exe` before
+rebuilding — Windows locks a running `.exe` and the link step will warn
+instead of overwriting it.
+
 Expected:
 
 ```text
@@ -109,11 +115,13 @@ This builds:
 | `test_basic.exe` | `tests/test_basic.cpp` |
 | `test_choices.exe` | `tests/test_choices.cpp` |
 | `gradient_check.exe` | `tests/gradient_check.cpp` |
+| `test_training.exe` | `tests/test_training.cpp` (XOR convergence, split determinism, Iris pipeline) |
 | `and_or_demo.exe` | `demos/and_or_demo.cpp` |
 | `xor_demo.exe` | `demos/xor_demo.cpp` |
 | `iris_demo.exe` | `demos/iris_demo.cpp` |
 | `compare_demo.exe` | `demos/compare_demo.cpp` |
 | `playground.exe` | `demos/playground.cpp` |
+| `gui_qt.exe` | `demos/gui_qt.cpp` (only if Qt6 Widgets are installed) |
 
 CMake alternative (if installed):
 
@@ -199,7 +207,7 @@ no dependencies, just open the file:
 |---|---|---|
 | MSE | any head | mean squared error, the default |
 | BCE | 1-output sigmoid | binary cross-entropy, predictions clipped to `[1e-12, 1-1e-12]`; rejects multi-output |
-| CCE | one-hot multi-output | categorical cross-entropy `-mean(t·log p)`; pairs with sigmoid heads as in `iris_demo` |
+| CCE | one-hot multi-output | per-output binary cross-entropy `-mean(t·log p + (1-t)·log(1-p))`, so wrong classes are pushed down and argmax works with sigmoid heads |
 
 Gradients are covered by centered finite-difference asserts in `test_choices.exe`.
 `playground` lets you pick the loss at the prompt; `xor_demo` uses MSE.
@@ -235,7 +243,8 @@ MiniANN Playground
 Dataset: 1=AND 2=OR 3=XOR 4=Iris 5=CSV file   (path, header, target col/dim,
                                                optional one-hot + max-abs norm)
   -> train/test split
-  -> architecture, e.g. "2 8 8 1" + "tanh tanh sigmoid"
+  -> hidden stack only, e.g. "8 8" + "tanh tanh sigmoid"
+     (input/output dims come from the dataset: XOR auto-builds [2 -> 8 -> 8 -> 1])
   -> loss mse|bce|cce, optimizer sgd|momentum|adam, lr, epochs, batch, seed
   -> train (network graph first, live log)
   -> loss curve, accuracy curve, boundary map (2-D), weights table,
@@ -245,6 +254,53 @@ Dataset: 1=AND 2=OR 3=XOR 4=Iris 5=CSV file   (path, header, target col/dim,
 
 Example session: pick `3` (XOR), sizes `2 4 1`, activations `tanh sigmoid`,
 loss `mse`, optimizer `sgd` — then type `1 0` at the `>` prompt.
+
+## Clickable GUI (Qt Widgets, optional)
+
+```bat
+.\gui_qt.exe
+```
+
+Same engine, mouse-driven: dataset buttons (AND/OR/XOR/Iris/CSV, drag-drop
+a `.csv` file onto the window or pick one with the Browse button) with a dataset
+info panel (samples, features, classes, train/val/test counts, dims), 1–4 hidden layers with per-layer size
+steppers and per-layer activation buttons plus an output-activation selector,
+epoch slider, batch selector (1..128, Full) with effective-batch display,
+learning-rate / seed / shuffle / normalization controls, per-optimizer
+hyperparameters (momentum, Adam β1/β2/ε), loss/optimizer buttons with
+compatibility warnings, and live loss/accuracy plots with a hover tooltip.
+Training runs on a worker thread, so the UI never freezes; the plots update
+through the same `TrainingCallback` hook as the console live view.
+The TRAIN button becomes STOP TRAINING while running, and the status badge
+walks IDLE → READY → TRAINING → COMPLETED / STOPPED / ERROR.
+The header always labels metric sources (Train Loss, Train Acc, Val Acc,
+Test Acc) and shows "—" for anything not evaluated yet, so train and test
+numbers can never contradict each other. After a run, a results dialog shows
+the full experiment summary plus a confusion matrix for classifiers; extra
+tabs visualize the decision boundary (2D datasets) and the network diagram.
+Models can be saved/loaded, and presets (XOR / Iris / Binary) configure a
+working experiment in one click. All UI choices flow through a single
+`ExperimentConfig` into `ExperimentController` (`include/miniann/experiment.hpp`),
+which validates the configuration (readable errors, no exceptions in the UI),
+uses a deterministic 80/10/10 train/val/test split (full-table evaluation for
+tiny ≤8-sample datasets), and evaluates the held-out test set separately.
+
+Notes:
+
+- Needs Qt6 Widgets installed (`pacman -S mingw-w64-ucrt-x86_64-qt6-base`
+  on MSYS2 UCRT64); without it, step 10/10 of `build.bat` prints a warning
+  and everything else still builds. `build.bat` never launches the GUI by itself.
+- Native OS text rendering with automatic per-monitor DPI handling, so text
+  stays sharp on scaled displays (125%/150%). F11 toggles maximize.
+- CSV controls appear when CSV is selected: target column (`auto` = last),
+  header yes/no. Non-numeric cells and bad columns report in the summary bar
+  instead of crashing. Multiclass CSV targets (integer labels 0..K-1) are
+  auto one-hot encoded.
+- BCE with a multi-output network is rejected with an error for the same reason.
+- Not yet implemented: experiment save/compare files (§28–29 of the spec),
+  activation-function plots, early stopping. The backend exposes everything
+  needed (`TrainingHistory`, `TrainingCallback::shouldStop`), so these are
+  pure UI additions.
 
 ## How to test (and what pass looks like)
 

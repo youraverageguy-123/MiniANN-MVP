@@ -30,6 +30,8 @@ public:
     void print() const;
     double precision(std::size_t classIdx) const;
     double recall(std::size_t classIdx) const;
+    // Raw counts after evaluate(): rows = actual, cols = predicted.
+    const std::vector<std::vector<std::size_t>>& matrix() const { return matrix_; }
 private:
     std::size_t numClasses_;
     mutable std::vector<std::vector<std::size_t>> matrix_;
