@@ -567,31 +567,31 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.fillRect(rect(), QColor(0x0A, 0x0D, 0x14));
+        p.fillRect(rect(), QColor(0x09, 0x0A, 0x0F));
         const int m = 14;
 
         // Top tag banner (strictly outside and above the neuron area)
         if (!m_tag.isEmpty()) {
             QRect tagBox(m, m, width() - 2 * m, 24);
-            p.setPen(QPen(QColor(0x1E, 0x26, 0x38), 1));
-            p.setBrush(QColor(0x11, 0x16, 0x24));
-            p.drawRoundedRect(tagBox, 5, 5);
+            p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
+            p.setBrush(QColor(0x13, 0x15, 0x20));
+            p.drawRoundedRect(tagBox, 4, 4);
 
             QFont tf = font();
             tf.setPointSize(8);
             tf.setBold(true);
             p.setFont(tf);
-            p.setPen(QColor(0x94, 0xA3, 0xB8));
+            p.setPen(QColor(0x8A, 0x90, 0xA0));
             QString tag = fontMetrics().elidedText(m_tag, Qt::ElideRight, tagBox.width() - 16);
             p.drawText(tagBox.adjusted(10, 0, -10, 0), Qt::AlignLeft | Qt::AlignVCenter, tag);
         }
 
         // Bounding area for network nodes and edges: starts strictly below the tag banner
-        QRect area(m, m + 32, width() - 2 * m, height() - 2 * m - 32 - 26);
+        QRect area(m, m + 30, width() - 2 * m, height() - 2 * m - 30 - 26);
         if (area.width() < 40 || area.height() < 40) return;
-        p.setPen(QPen(QColor(0x1E, 0x25, 0x36), 1));
-        p.setBrush(QColor(0x0E, 0x12, 0x1C));
-        p.drawRoundedRect(area.adjusted(0, 0, -1, -1), 6, 6);
+        p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(area.adjusted(0, 0, -1, -1));
 
         // Resolve layers to draw: trained net wins, else skeleton.
         struct Col { QString name; std::size_t n; };
@@ -642,13 +642,13 @@ protected:
             double cx = colX(l);
             for (std::size_t i = 0; i < shown[l]; ++i) {
                 double cy = (shown[l] == 1) ? area.center().y()
-                    : area.top() + 24 + (double)i / (double)(shown[l] - 1) * (area.height() - 48);
+                    : area.top() + 20 + (double)i / (double)(shown[l] - 1) * (area.height() - 40);
                 pts[l].push_back(QPointF(cx, cy));
                 m_hit[l].push_back(QRectF(cx - 12, cy - 12, 24, 24));
             }
         }
 
-        // Edges: weight magnitude & polarity (Cyan = positive/excitatory, Coral = negative/inhibitory)
+        // Edges: pure black-bluish visual (luminous cyan/blue lines scaled by weight magnitude)
         for (std::size_t l = 1; l < L; ++l) {
             for (std::size_t a_idx = 0; a_idx < shown[l - 1]; ++a_idx) {
                 for (std::size_t b_idx = 0; b_idx < shown[l]; ++b_idx) {
@@ -667,21 +667,18 @@ protected:
 
                     if (hasW) {
                         double absW = std::abs(w);
-                        qreal penW = std::clamp(0.8 + absW * 0.7, 1.0, 3.5);
-                        int alpha = std::clamp(static_cast<int>(40 + absW * 60), 40, 220);
-                        QColor edgeCol = (w >= 0.0)
-                            ? QColor(56, 189, 248, alpha)   // Cyan (excitatory)
-                            : QColor(248, 113, 113, alpha); // Coral (inhibitory)
-                        p.setPen(QPen(edgeCol, penW));
+                        qreal penW = std::clamp(1.0 + absW * 0.4, 1.0, 2.4);
+                        int alpha = std::clamp(static_cast<int>(30 + absW * 55), 30, 180);
+                        p.setPen(QPen(QColor(0x5A, 0xA9, 0xE6, alpha), penW));
                     } else {
-                        p.setPen(QPen(QColor(0x3B, 0x82, 0xF6, 35), 1));
+                        p.setPen(QPen(QColor(0x5A, 0xA9, 0xE6, 30), 1));
                     }
                     p.drawLine(pts[l - 1][a_idx], pts[l][b_idx]);
                 }
             }
         }
 
-        // Nodes: fill brightness = firing (trained) else flat
+        // Nodes: classic luminous blue firing on deep navy/black base
         for (std::size_t l = 0; l < L; ++l) {
             for (std::size_t i = 0; i < shown[l]; ++i) {
                 double f = -1.0;
@@ -689,19 +686,19 @@ protected:
                     f = fire[l][i];
                     if (fire[l].size() > 1) f = std::max(0.0, std::min(1.0, f));
                 }
-                QColor fill = (f < 0.0) ? QColor(0x16, 0x1D, 0x2C)
-                    : QColor::fromHslF(0.58, 0.85, 0.20 + 0.45 * std::max(0.0, std::min(1.0, f)));
+                QColor fill = (f < 0.0) ? QColor(0x1B, 0x1E, 0x2B)
+                    : QColor::fromHslF(0.58, 0.75, 0.12 + 0.35 * std::max(0.0, std::min(1.0, f)));
                 p.setBrush(fill);
-                p.setPen(QPen(QColor(0x60, 0xA5, 0xFA), 2.0));
-                p.drawEllipse(pts[l][i], 9.5, 9.5);
+                p.setPen(QPen(QColor(0x7F, 0xB3, 0xE8), 1.5));
+                p.drawEllipse(pts[l][i], 9, 9);
             }
             if (shown[l] < cols[l].n) {
-                p.setPen(QColor(0x94, 0xA3, 0xB8));
+                p.setPen(QColor(0x8A, 0x90, 0xA0));
                 QFont f = font();
                 f.setPointSize(8);
                 p.setFont(f);
                 double cx = pts[l][0].x();
-                p.drawText(QRect(int(cx) - 40, area.bottom() - 28, 80, 16), Qt::AlignHCenter,
+                p.drawText(QRect(int(cx) - 40, area.bottom() - 30, 80, 16), Qt::AlignHCenter,
                            QStringLiteral("+") + QString::number((unsigned long long)(cols[l].n - shown[l])));
             }
         }
@@ -709,9 +706,8 @@ protected:
         // Column labels: short, elided to the column slot (no overlap).
         QFont lf = font();
         lf.setPointSize(8);
-        lf.setBold(true);
         p.setFont(lf);
-        p.setPen(QColor(0xCF, 0xD6, 0xE4));
+        p.setPen(QColor(0xD0, 0xD3, 0xDB));
         for (std::size_t l = 0; l < L; ++l) {
             double cx = colX(l);
             QString t = cols[l].name + QString::asprintf(" [%llu]", (unsigned long long)cols[l].n);
@@ -784,34 +780,31 @@ public:
     CollapsibleSection(const QString& title, bool expanded, QWidget* parent = nullptr)
         : QWidget(parent), m_title(title) {
         auto* outer = new QVBoxLayout(this);
-        outer->setContentsMargins(0, 0, 0, 0);
-        outer->setSpacing(4);
+        outer->setContentsMargins(0, 4, 0, 4);
+        outer->setSpacing(6);
+
+        auto* line = new QFrame;
+        line->setFixedHeight(1);
+        line->setStyleSheet(QStringLiteral("background:#1E2333; border:none;"));
+        outer->addWidget(line);
+
         m_head = new QPushButton;
         m_head->setCursor(Qt::PointingHandCursor);
         m_head->setFlat(true);
-        m_head->setMinimumHeight(28);
+        m_head->setMinimumHeight(26);
         m_head->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         m_head->setStyleSheet(QStringLiteral(
-            "QPushButton { text-align: left; background:#151722; border:1px solid #232738;"
-            " border-radius:2px; padding:4px 8px; color:#E8EAF0; }"
-            "QPushButton:hover { background:#1B1E2B; border:1px solid #2E3448; }"));
-        QFont hf = m_head->font();
-        hf.setPointSize(10);
-        hf.setBold(true);
-        m_head->setFont(hf);
+            "QPushButton { text-align:left; background:transparent; border:none;"
+            " border-radius:4px; padding:4px 6px; color:#94A3B8; font-weight:700; font-size:11px; letter-spacing:0.5px; }"
+            "QPushButton:hover { background:rgba(255,255,255,0.04); color:#F1F5F9; }"));
         connect(m_head, &QPushButton::clicked, [this]() { setExpanded(!m_expanded); });
         outer->addWidget(m_head);
+
         m_body = new QWidget;
-        // Explicit backdrop, same color as the surrounding card: plain
-        // containers otherwise let the light Fusion default show through
-        // layout gaps and label margins (the pale boxes). Inline style, so
-        // no other widget is touched; background does not inherit, so all
-        // children keep their own styling. Pixel-identical anywhere that
-        // already rendered dark.
-        m_body->setStyleSheet(QStringLiteral("background:#13151F; border:none;"));
+        m_body->setStyleSheet(QStringLiteral("background:transparent; border:none;"));
         m_lay = new QVBoxLayout(m_body);
         m_lay->setContentsMargins(0, 0, 0, 0);
-        m_lay->setSpacing(10);
+        m_lay->setSpacing(8);
         outer->addWidget(m_body);
         setExpanded(expanded);
     }
@@ -819,7 +812,7 @@ public:
     void setExpanded(bool e) {
         m_expanded = e;
         m_body->setVisible(e);
-        m_head->setText(QString::fromLatin1(m_expanded ? "- " : "+ ") + m_title);
+        m_head->setText((m_expanded ? QString::fromUtf8("▾  ") : QString::fromUtf8("▸  ")) + m_title);
     }
 
 private:
@@ -1206,9 +1199,7 @@ private:
         outer->setContentsMargins(20, 18, 20, 18);
         outer->setSpacing(10);
         m_configBox = new QWidget;
-        // Same explicit backdrop as the section bodies (see CollapsibleSection):
-        // covers the scroll viewport behind the whole column.
-        m_configBox->setStyleSheet(QStringLiteral("background:#13151F; border:none;"));
+        m_configBox->setStyleSheet(QStringLiteral("background:transparent; border:none;"));
         auto* lv = new QVBoxLayout(m_configBox);
         lv->setContentsMargins(0, 0, 0, 0);
         lv->setSpacing(10);
@@ -1223,34 +1214,56 @@ private:
         cfgScroll->setWidget(m_configBox);
         outer->addWidget(cfgScroll, 1);
 
-        // presets (§41)
+        // presets
         auto* preRow = new QHBoxLayout;
-        preRow->setSpacing(4);
+        preRow->setSpacing(8);
         auto* preLbl = new QLabel(QStringLiteral("PRESETS"));
-        preLbl->setStyleSheet(QStringLiteral("color:#8A90A0;"));
+        preLbl->setStyleSheet(QStringLiteral("color:#64748B; font-weight:700; font-size:10px; letter-spacing:0.5px;"));
         preRow->addWidget(preLbl);
+        auto* preWell = new QFrame;
+        preWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        auto* preWellLay = new QHBoxLayout(preWell);
+        preWellLay->setContentsMargins(2, 2, 2, 2);
+        preWellLay->setSpacing(2);
         const char* preNames[3] = {"XOR", "Iris", "Binary"};
         for (int i = 0; i < 3; ++i) {
-            QPushButton* b = makeBtn(QString::fromLatin1(preNames[i]));
+            QPushButton* b = new QPushButton(QString::fromLatin1(preNames[i]));
+            b->setCursor(Qt::PointingHandCursor);
+            b->setFixedHeight(26);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            preRow->addWidget(b);
+            b->setStyleSheet(QStringLiteral(
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:600; padding:4px 8px; }"
+                "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
+                "QPushButton:pressed { background:#2563EB; color:#FFFFFF; }"));
+            preWellLay->addWidget(b);
             m_presetBtns.push_back(b);
         }
         connect(m_presetBtns[0], &QPushButton::clicked, [this]() { applyPresetXor(true); });
         connect(m_presetBtns[1], &QPushButton::clicked, [this]() { applyPresetIris(); });
         connect(m_presetBtns[2], &QPushButton::clicked, [this]() { applyPresetBinary(); });
+        preRow->addWidget(preWell, 1);
         lv->addLayout(preRow);
 
         // 1. dataset
         auto* sec1 = new CollapsibleSection(QStringLiteral("1. DATASET"), true, m_configBox);
         lv->addWidget(sec1);
         QVBoxLayout* s1 = sec1->content();
-        auto* dsRow = new QHBoxLayout;
-        dsRow->setSpacing(4);
+        auto* dsWell = new QFrame;
+        dsWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        auto* dsWellLay = new QHBoxLayout(dsWell);
+        dsWellLay->setContentsMargins(2, 2, 2, 2);
+        dsWellLay->setSpacing(2);
         for (int i = 0; i < 5; ++i) {
-            QPushButton* b = makeBtn(QString::fromLatin1(kDsNames[i]));
+            QPushButton* b = new QPushButton(QString::fromLatin1(kDsNames[i]));
+            b->setCheckable(true);
+            b->setCursor(Qt::PointingHandCursor);
+            b->setFixedHeight(28);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-            dsRow->addWidget(b);
+            b->setStyleSheet(QStringLiteral(
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:600; padding:4px 6px; }"
+                "QPushButton:hover { background:rgba(255,255,255,0.05); color:#F1F5F9; }"
+                "QPushButton:checked { background:#2563EB; color:#FFFFFF; border:1px solid #3B82F6; font-weight:bold; }"));
+            dsWellLay->addWidget(b);
             m_dsBtns.push_back(b);
         }
         setExclusive(m_dsBtns);
@@ -1260,22 +1273,18 @@ private:
                 configChanged();
             });
         }
-        s1->addLayout(dsRow);
+        s1->addWidget(dsWell);
 
-        // dataset info (§3.2) — wrapped in a real panel frame so the
-        // QFrame#panel card style actually applies. A bare QLabel never
-        // matches that selector, which is why this rendered as naked text.
+        // dataset info
         auto* dsInfoPanel = new QFrame;
         dsInfoPanel->setObjectName(QStringLiteral("panel"));
-        // Inline (not via the QFrame#panel selector): guaranteed to apply.
-        // Colors reused from the button palette — no new theme colors.
         dsInfoPanel->setStyleSheet(QStringLiteral(
-            "background:#1B1E2B; border:1px solid #2E3448; border-radius:4px;"));
+            "background:#141824; border:1px solid #1E2333; border-radius:6px;"));
         auto* dsInfoLay = new QVBoxLayout(dsInfoPanel);
         dsInfoLay->setContentsMargins(12, 10, 12, 10);
         dsInfoLay->setSpacing(0);
         m_dsInfoLbl = new QLabel;
-        m_dsInfoLbl->setStyleSheet(QStringLiteral("color:#7FB3E8;"));
+        m_dsInfoLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; line-height:140%;"));
         m_dsInfoLbl->setWordWrap(true);
         dsInfoLay->addWidget(m_dsInfoLbl);
         s1->addWidget(dsInfoPanel);
@@ -1344,21 +1353,21 @@ private:
         layRow->addWidget(layPlus);
         layRow->addStretch(1);
         s2->addLayout(layRow);
-        // Architecture summary panel (same card treatment as dataset info).
+        // Architecture summary panel
         auto* archPanel = new QFrame;
         archPanel->setObjectName(QStringLiteral("panel"));
         archPanel->setStyleSheet(QStringLiteral(
-            "background:#1B1E2B; border:1px solid #2E3448; border-radius:4px;"));
+            "background:#141824; border:1px solid #1E2333; border-radius:6px;"));
         auto* archLay = new QVBoxLayout(archPanel);
         archLay->setContentsMargins(12, 10, 12, 10);
         archLay->setSpacing(4);
         m_archLbl = new QLabel;
-        m_archLbl->setStyleSheet(QStringLiteral("color:#7FB3E8;"));
+        m_archLbl->setStyleSheet(QStringLiteral("color:#60A5FA; font-weight:600; font-size:12px;"));
         m_archLbl->setWordWrap(true);
         archLay->addWidget(m_archLbl);
         // Hidden-layer detail lives in a popup (1-8 layers without clutter).
         m_hiddenSumLbl = new QLabel;
-        m_hiddenSumLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        m_hiddenSumLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px;"));
         m_hiddenSumLbl->setWordWrap(true);
         archLay->addWidget(m_hiddenSumLbl);
         s2->addWidget(archPanel);
@@ -1388,14 +1397,10 @@ private:
         auto* epTop = new QHBoxLayout;
         epTop->setSpacing(8);
         m_epochValLbl = new QLabel;
-        m_epochValLbl->setStyleSheet(QStringLiteral("color:#FACC15;"));
-        QFont epFont = m_epochValLbl->font();
-        epFont.setPointSize(10);
-        epFont.setBold(true);
-        m_epochValLbl->setFont(epFont);
+        m_epochValLbl->setStyleSheet(QStringLiteral("color:#60A5FA; background:#141824; border:1px solid #1E2333; border-radius:4px; padding:2px 8px; font-family:'Consolas',monospace; font-weight:bold; font-size:11px;"));
         epTop->addWidget(m_epochValLbl);
         auto* epLab = new QLabel(QStringLiteral("EPOCHS"));
-        epLab->setStyleSheet(QStringLiteral("color:#8A90A0;"));
+        epLab->setStyleSheet(QStringLiteral("color:#64748B; font-weight:700; font-size:10px; letter-spacing:0.5px;"));
         epTop->addWidget(epLab);
         epTop->addStretch(1);
         s3->addLayout(epTop);
@@ -1799,36 +1804,36 @@ private:
 
     void applyTheme() {
         setStyleSheet(QStringLiteral(
-            "QMainWindow, QWidget#qt_top { background:#0A0D14; }"
-            "QFrame#topbar { background:#0E131F; border:none; border-bottom:1px solid #1E2638; }"
-            "QFrame#card { background:#111622; border:1px solid #1E273A; border-radius:8px; }"
-            "QFrame#panel { background:#151C2C; border:1px solid #232F46; border-radius:6px; }"
+            "QMainWindow, QWidget#qt_top { background:#090B10; }"
+            "QFrame#topbar { background:#0E111A; border:none; border-bottom:1px solid #1E2333; }"
+            "QFrame#card { background:#0E111A; border:1px solid #1E2333; border-radius:8px; }"
+            "QFrame#panel { background:#141824; border:1px solid #1E2333; border-radius:6px; }"
             "QLabel { color:#E2E8F0; }"
-            "QPushButton { background:#172032; color:#E2E8F0; border:1px solid #273650; border-radius:6px; padding:6px 12px; font-weight:500; }"
-            "QPushButton:hover { background:#1F2B42; border:1px solid #3B82F6; }"
+            "QPushButton { background:#151824; color:#E2E8F0; border:1px solid #1E2333; border-radius:6px; padding:6px 12px; font-weight:500; }"
+            "QPushButton:hover { background:#1D2232; border:1px solid #3B82F6; }"
             "QPushButton:checked { background:#2563EB; color:#FFFFFF; border:1px solid #60A5FA; }"
-            "QPushButton:disabled { background:#101522; color:#475569; border:1px solid #1A2234; }"
+            "QPushButton:disabled { background:#0F121C; color:#475569; border:1px solid #181D2A; }"
             "QPushButton#trainBtn { background:qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669); color:#FFFFFF; border:none; border-radius:6px; }"
             "QPushButton#trainBtn:hover { background:#10B981; }"
             "QPushButton#stopBtn { background:qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #EF4444, stop:1 #B91C1C); color:#FFFFFF; border:none; border-radius:6px; }"
             "QPushButton#stopBtn:hover { background:#DC2626; }"
-            "QSlider::groove:horizontal { background:#1E273A; height:6px; border-radius:3px; }"
-            "QSlider::handle:horizontal { background:#F8FAFC; width:14px; height:14px; margin:-4px 0; border-radius:7px; }"
-            "QSlider::sub-page:horizontal { background:#3B82F6; border-radius:3px; }"
-            "QSpinBox, QComboBox, QDoubleSpinBox { background:#151C2C; color:#F8FAFC; border:1px solid #273650; border-radius:6px; padding:5px 8px; }"
-            "QComboBox QAbstractItemView { background:#151C2C; color:#F8FAFC; selection-background-color:#2563EB; border:1px solid #273650; }"
-            "QCheckBox { color:#CBD5E1; }"
-            "QStatusBar { background:#0A0D14; color:#64748B; border-top:1px solid #1E2638; }"
+            "QSlider::groove:horizontal { background:#1A1F2E; height:5px; border-radius:2px; }"
+            "QSlider::handle:horizontal { background:#F8FAFC; border:1px solid #3B82F6; width:13px; height:13px; margin:-4px 0; border-radius:6px; }"
+            "QSlider::sub-page:horizontal { background:#3B82F6; border-radius:2px; }"
+            "QSpinBox, QComboBox, QDoubleSpinBox { background:#151824; color:#F1F5F9; border:1px solid #1E2333; border-radius:6px; padding:4px 8px; }"
+            "QComboBox QAbstractItemView { background:#151824; color:#F1F5F9; selection-background-color:#2563EB; border:1px solid #1E2333; }"
+            "QCheckBox { color:#94A3B8; }"
+            "QStatusBar { background:#090B10; color:#64748B; border-top:1px solid #1E2333; }"
             "QToolTip { background:#0F172A; color:#F8FAFC; border:1px solid #334155; border-radius:6px; padding:6px; font-size:11px; }"
-            "QTableWidget { background:#151C2C; color:#F8FAFC; gridline-color:#232F46; border:1px solid #232F46; border-radius:6px; }"
+            "QTableWidget { background:#151824; color:#F8FAFC; gridline-color:#1E2333; border:1px solid #1E2333; border-radius:6px; }"
             "QScrollArea { background:transparent; border:none; }"
-            "QScrollBar:vertical { background:transparent; width:10px; margin:0; border:none; }"
-            "QScrollBar::handle:vertical { background:#1E273A; min-height:30px; border-radius:5px; }"
-            "QScrollBar::handle:vertical:hover { background:#2E3D5B; }"
+            "QScrollBar:vertical { background:transparent; width:8px; margin:0; border:none; }"
+            "QScrollBar::handle:vertical { background:#1E2333; min-height:24px; border-radius:4px; }"
+            "QScrollBar::handle:vertical:hover { background:#2E374D; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; border:none; }"
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:none; border:none; }"
-            "QHeaderView::section { background:#172032; color:#CBD5E1; border:1px solid #232F46; padding:5px; }"
-            "QDialog { background:#111622; }"
+            "QHeaderView::section { background:#151824; color:#94A3B8; border:1px solid #1E2333; padding:5px; }"
+            "QDialog { background:#0E111A; }"
         ));
     }
 
