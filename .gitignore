@@ -51,6 +51,9 @@ docs/*NOTES*.md
 *.suo
 Thumbs.db
 .DS_Store
+*.aux
+*.log
+texput.log
 
 # Python plot helper output (if you use plot.py)
 training_curve.png

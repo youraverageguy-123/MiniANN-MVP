@@ -106,6 +106,7 @@ struct LiveGuiBridge : public TrainingCallback {
     int currentEpoch = 0;
     std::atomic<bool> isTraining{false};
     std::atomic<bool> stopRequested{false};
+    std::atomic<int> epochDelayMs{0};
     std::string summary = "Ready to train.";
     // -- completed-run snapshot --
     unsigned runSeq = 0;
@@ -128,6 +129,10 @@ struct LiveGuiBridge : public TrainingCallback {
     std::size_t lastInDim = 0, lastOutDim = 0;
 
     void onEpoch(int epoch, const TrainingHistory& hist) override {
+        int delay = epochDelayMs.load();
+        if (delay > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+        }
         std::lock_guard<std::mutex> lock(mtx);
         currentEpoch = epoch;
         if (!hist.trainLoss.empty())       trainLoss.push_back((float)hist.trainLoss.back());
@@ -562,17 +567,31 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.fillRect(rect(), QColor(0x09, 0x0A, 0x0F));
+        p.fillRect(rect(), QColor(0x0A, 0x0D, 0x14));
         const int m = 14;
-        // Top inset leaves room for the source tag; bottom for column labels.
-        // Increased from 22 to 36px so the tag no longer collides with the first neuron row.
-        QRect area(m, m + 36, width() - 2 * m, height() - 2 * m - 36 - 26);
-        if (area.width() < 40 || area.height() < 40) return;
-        p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
-        p.setBrush(Qt::NoBrush);
-        p.drawRect(area.adjusted(0, 0, -1, -1));
 
-        // Resolve layers to draw: trained net wins, else skeleton.
+        // Top tag banner (strictly outside and above the neuron area)
+        if (!m_tag.isEmpty()) {
+            QRect tagBox(m, m, width() - 2 * m, 24);
+            p.setPen(QPen(QColor(0x1E, 0x26, 0x38), 1));
+            p.setBrush(QColor(0x11, 0x16, 0x24));
+            p.drawRoundedRect(tagBox, 5, 5);
+
+            QFont tf = font();
+            tf.setPointSize(8);
+            tf.setBold(true);
+            p.setFont(tf);
+            p.setPen(QColor(0x94, 0xA3, 0xB8));
+            QString tag = fontMetrics().elidedText(m_tag, Qt::ElideRight, tagBox.width() - 16);
+            p.drawText(tagBox.adjusted(10, 0, -10, 0), Qt::AlignLeft | Qt::AlignVCenter, tag);
+        }
+
+        // Bounding area for network nodes and edges: starts strictly below the tag banner
+        QRect area(m, m + 32, width() - 2 * m, height() - 2 * m - 32 - 26);
+        if (area.width() < 40 || area.height() < 40) return;
+        p.setPen(QPen(QColor(0x1E, 0x25, 0x36), 1));
+        p.setBrush(QColor(0x0E, 0x12, 0x1C));
+        p.drawRoundedRect(area.adjusted(0, 0, -1, -1), 6, 6);
 
         // Resolve layers to draw: trained net wins, else skeleton.
         struct Col { QString name; std::size_t n; };
@@ -597,6 +616,7 @@ protected:
                        QStringLiteral("Train a network (or load a model)\nto see its architecture diagram."));
             return;
         }
+
         // Firing values for the probe (trained net only).
         std::vector<std::vector<double>> fire;
         if (m_net && !m_probe.empty()) {
@@ -622,23 +642,46 @@ protected:
             double cx = colX(l);
             for (std::size_t i = 0; i < shown[l]; ++i) {
                 double cy = (shown[l] == 1) ? area.center().y()
-                    : area.top() + 18 + (double)i / (double)(shown[l] - 1) * (area.height() - 36);
+                    : area.top() + 24 + (double)i / (double)(shown[l] - 1) * (area.height() - 48);
                 pts[l].push_back(QPointF(cx, cy));
-                m_hit[l].push_back(QRectF(cx - 11, cy - 11, 22, 22));
+                m_hit[l].push_back(QRectF(cx - 12, cy - 12, 24, 24));
             }
         }
-        // Edges (capped count, faint so nodes stay readable).
-        std::size_t edges = 0;
-        for (std::size_t l = 1; l < L; ++l) edges += shown[l - 1] * shown[l];
-        std::size_t k = edges > 350 ? (edges + 349) / 350 : 1;
-        p.setPen(QPen(QColor(0x5A, 0xA9, 0xE6, 30), 1));
-        std::size_t e = 0;
-        for (std::size_t l = 1; l < L; ++l)
-            for (auto a : pts[l - 1])
-                for (auto b : pts[l]) {
-                    if ((e++ % k) == 0) p.drawLine(a, b);
+
+        // Edges: weight magnitude & polarity (Cyan = positive/excitatory, Coral = negative/inhibitory)
+        for (std::size_t l = 1; l < L; ++l) {
+            for (std::size_t a_idx = 0; a_idx < shown[l - 1]; ++a_idx) {
+                for (std::size_t b_idx = 0; b_idx < shown[l]; ++b_idx) {
+                    double w = 0.0;
+                    bool hasW = false;
+                    if (m_net && (l - 1) < m_net->numLayers()) {
+                        const auto& lyr = m_net->layers()[l - 1];
+                        if (b_idx < lyr.size()) {
+                            const auto& ws = lyr.neurons()[b_idx].weights();
+                            if (a_idx < ws.size()) {
+                                w = ws[a_idx];
+                                hasW = true;
+                            }
+                        }
+                    }
+
+                    if (hasW) {
+                        double absW = std::abs(w);
+                        qreal penW = std::clamp(0.8 + absW * 0.7, 1.0, 3.5);
+                        int alpha = std::clamp(static_cast<int>(40 + absW * 60), 40, 220);
+                        QColor edgeCol = (w >= 0.0)
+                            ? QColor(56, 189, 248, alpha)   // Cyan (excitatory)
+                            : QColor(248, 113, 113, alpha); // Coral (inhibitory)
+                        p.setPen(QPen(edgeCol, penW));
+                    } else {
+                        p.setPen(QPen(QColor(0x3B, 0x82, 0xF6, 35), 1));
+                    }
+                    p.drawLine(pts[l - 1][a_idx], pts[l][b_idx]);
                 }
-        // Nodes: fill brightness = firing (trained) else flat.
+            }
+        }
+
+        // Nodes: fill brightness = firing (trained) else flat
         for (std::size_t l = 0; l < L; ++l) {
             for (std::size_t i = 0; i < shown[l]; ++i) {
                 double f = -1.0;
@@ -646,44 +689,35 @@ protected:
                     f = fire[l][i];
                     if (fire[l].size() > 1) f = std::max(0.0, std::min(1.0, f));
                 }
-                QColor fill = (f < 0.0) ? QColor(0x1B, 0x1E, 0x2B)
-                    : QColor::fromHslF(0.58, 0.75, 0.12 + 0.35 * std::max(0.0, std::min(1.0, f)));
+                QColor fill = (f < 0.0) ? QColor(0x16, 0x1D, 0x2C)
+                    : QColor::fromHslF(0.58, 0.85, 0.20 + 0.45 * std::max(0.0, std::min(1.0, f)));
                 p.setBrush(fill);
-                p.setPen(QPen(QColor(0x7F, 0xB3, 0xE8), 1.5));
-                p.drawEllipse(pts[l][i], 9, 9);
+                p.setPen(QPen(QColor(0x60, 0xA5, 0xFA), 2.0));
+                p.drawEllipse(pts[l][i], 9.5, 9.5);
             }
             if (shown[l] < cols[l].n) {
-                p.setPen(QColor(0x8A, 0x90, 0xA0));
+                p.setPen(QColor(0x94, 0xA3, 0xB8));
                 QFont f = font();
                 f.setPointSize(8);
                 p.setFont(f);
                 double cx = pts[l][0].x();
-                p.drawText(QRect(int(cx) - 40, area.bottom() - 34, 80, 16), Qt::AlignHCenter,
+                p.drawText(QRect(int(cx) - 40, area.bottom() - 28, 80, 16), Qt::AlignHCenter,
                            QStringLiteral("+") + QString::number((unsigned long long)(cols[l].n - shown[l])));
             }
         }
+
         // Column labels: short, elided to the column slot (no overlap).
         QFont lf = font();
         lf.setPointSize(8);
+        lf.setBold(true);
         p.setFont(lf);
-        p.setPen(QColor(0xD0, 0xD3, 0xDB));
+        p.setPen(QColor(0xCF, 0xD6, 0xE4));
         for (std::size_t l = 0; l < L; ++l) {
             double cx = colX(l);
             QString t = cols[l].name + QString::asprintf(" [%llu]", (unsigned long long)cols[l].n);
             t = fontMetrics().elidedText(t, Qt::ElideRight, int(slot) - 4);
             int w = fontMetrics().horizontalAdvance(t);
             p.drawText(QRect(int(cx) - w / 2, area.bottom() + 4, w + 4, 18), Qt::AlignLeft, t);
-        }
-        // Source tag at the TOP inside the frame (was colliding with labels).
-        if (!m_tag.isEmpty()) {
-            QFont tf = font();
-            tf.setPointSize(8);
-            tf.setItalic(true);
-            p.setFont(tf);
-            p.setPen(QColor(0x8A, 0x90, 0xA0));
-            QString tag = fontMetrics().elidedText(m_tag, Qt::ElideRight, area.width() - 8);
-            p.drawText(QRect(area.left() + 4, area.top() + 6, area.width() - 8, 16),
-                       Qt::AlignLeft | Qt::AlignTop, tag);
         }
     }
 
@@ -695,11 +729,10 @@ protected:
         for (std::size_t l = 0; l < m_hit.size(); ++l)
             for (std::size_t i = 0; i < m_hit[l].size(); ++i)
                 if (m_hit[l][i].contains(e->pos())) {
-                    // Layer l==0 is the input column; net layers are offset by one.
                     QString tip;
                     if (l == 0) {
                         double v = (i < m_probe.size()) ? m_probe[i] : 0.0;
-                        tip = QString::asprintf("Input x%llu = %.4f", (unsigned long long)i + 1, v);
+                        tip = QString::asprintf("Input Node #%llu\nValue: %.4f", (unsigned long long)i + 1, v);
                     } else {
                         std::size_t li = l - 1;
                         if (li < m_net->numLayers() && i < m_net->layers()[li].size()) {
@@ -709,9 +742,9 @@ protected:
                                 ws += QString::asprintf("%s%.3f", k ? ", " : "", n.weights()[k]);
                             if (n.weights().size() > 6) ws += QStringLiteral(", …");
                             double out = n.lastOutput();
-                            tip = QString::asprintf("L%lluN%llu  b=%.3f  out=%.3f\nw=[%s]",
-                                (unsigned long long)li, (unsigned long long)i,
-                                n.bias(), out, ws.toLatin1().constData());
+                            tip = QString::asprintf("Layer %llu, Neuron %llu\nBias: %+.4f\nAct: %s | Out: %.4f\nWeights: [%s]",
+                                (unsigned long long)li + 1, (unsigned long long)i + 1,
+                                n.bias(), n.activation().name().c_str(), out, ws.toLatin1().constData());
                         }
                     }
                     if (!tip.isEmpty()) QToolTip::showText(e->globalPosition().toPoint(), tip, this);
@@ -822,6 +855,10 @@ public:
         // Debug hook: preselect CSV (empty path) to screenshot the upload row.
         if (QApplication::arguments().contains(QStringLiteral("--csv")))
             m_dataset = DS_CSV;
+        if (QApplication::arguments().contains(QStringLiteral("--net"))) {
+            m_view = VIEW_NETWORK;
+            syncTabs();
+        }
         refreshConfigUi();
 
         m_timer = new QTimer(this);
@@ -1126,13 +1163,14 @@ private:
         auto* top = new QFrame;
         top->setObjectName(QStringLiteral("topbar"));
         auto* topLay = new QHBoxLayout(top);
-        topLay->setContentsMargins(24, 10, 24, 10);
-        topLay->setSpacing(22);
+        topLay->setContentsMargins(20, 10, 20, 10);
+        topLay->setSpacing(10);
         auto* titleLbl = new QLabel(QStringLiteral("MiniANN MVP - Network Workbench"));
         QFont titleFont = titleLbl->font();
-        titleFont.setPointSize(15);
+        titleFont.setPointSize(14);
+        titleFont.setBold(true);
         titleLbl->setFont(titleFont);
-        titleLbl->setStyleSheet(QStringLiteral("color:#F2F3F7;"));
+        titleLbl->setStyleSheet(QStringLiteral("color:#F8FAFC;"));
         topLay->addWidget(titleLbl);
         topLay->addStretch(1);
         m_epochLbl = new QLabel;
@@ -1140,18 +1178,16 @@ private:
         m_trainAccLbl = new QLabel;
         m_valAccLbl = new QLabel;
         m_testAccLbl = new QLabel;
-        QFont statFont = m_epochLbl->font();
-        statFont.setPointSize(10);
-        m_epochLbl->setFont(statFont);
-        m_trainLossLbl->setFont(statFont);
-        m_trainAccLbl->setFont(statFont);
-        m_valAccLbl->setFont(statFont);
-        m_testAccLbl->setFont(statFont);
-        m_epochLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
-        m_trainLossLbl->setStyleSheet(QStringLiteral("color:#FACC15;"));
-        m_trainAccLbl->setStyleSheet(QStringLiteral("color:#7FB3E8;"));
-        m_valAccLbl->setStyleSheet(QStringLiteral("color:#F5A623;"));
-        m_testAccLbl->setStyleSheet(QStringLiteral("color:#22C55E;"));
+        auto makeStatChip = [](QLabel* lbl, const char* fg) {
+            lbl->setStyleSheet(QString::asprintf(
+                "QLabel { background:#151B28; color:%s; border:1px solid #222D42; border-radius:6px; padding:5px 11px; font-family:'Consolas','Segoe UI',monospace; font-size:11px; font-weight:bold; }",
+                fg));
+        };
+        makeStatChip(m_epochLbl, "#E2E8F0");
+        makeStatChip(m_trainLossLbl, "#FBBF24");
+        makeStatChip(m_trainAccLbl, "#60A5FA");
+        makeStatChip(m_valAccLbl, "#F59E0B");
+        makeStatChip(m_testAccLbl, "#34D399");
         topLay->addWidget(m_epochLbl);
         topLay->addWidget(m_trainLossLbl);
         topLay->addWidget(m_trainAccLbl);
@@ -1597,7 +1633,7 @@ private:
         // (No dead stretch here: the scroll area above takes all extra space,
         // keeping SAVE/LOAD + START docked at the bottom.)
         auto* modelRow = new QHBoxLayout;
-        modelRow->setSpacing(6);
+        modelRow->setSpacing(8);
         m_saveBtn = makeBtn(QStringLiteral("SAVE MODEL"));
         m_loadBtn = makeBtn(QStringLiteral("LOAD MODEL"));
         m_saveBtn->setEnabled(false);
@@ -1605,20 +1641,26 @@ private:
         connect(m_loadBtn, &QPushButton::clicked, [this]() { onLoadModel(); });
         modelRow->addWidget(m_saveBtn, 1);
         modelRow->addWidget(m_loadBtn, 1);
-        // Speed control for small-dataset visibility: throttles how many epochs
-        // are rendered per GUI update tick, so users can watch learning on XOR/AND/OR.
+        outer->addLayout(modelRow);
+
+        // Dedicated pacing & step control row (clean spacing, responsive controls)
+        auto* paceRow = new QHBoxLayout;
+        paceRow->setSpacing(8);
+        auto* paceLbl = new QLabel(QStringLiteral("Pacing:"));
+        paceLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:bold;"));
         m_speedSlider = new QSlider(Qt::Horizontal);
-        m_speedSlider->setRange(1, 20);
-        m_speedSlider->setValue(1);
-        m_speedSlider->setFixedWidth(60);
-        m_speedSlider->setToolTip("Epochs per update tick (1 = fastest, 20 = slowest)");
-        modelRow->addWidget(m_speedSlider);
-        m_stepBtn = new QPushButton(QStringLiteral("[Step 1]"));
-        m_stepBtn->setFixedWidth(70);
-        m_stepBtn->setToolTip("Advance one step of epochs (respects speed setting)");
+        m_speedSlider->setRange(0, 20);
+        m_speedSlider->setValue(0);
+        m_speedSlider->setToolTip("Pacing delay per epoch (slide right to slow down for visual observation)");
+        connect(m_speedSlider, &QSlider::valueChanged, [](int v) {
+            g_bridge.epochDelayMs.store(v * 2); // 0 to 40ms delay per epoch
+        });
+        m_stepBtn = makeBtn(QStringLiteral("Step 10 Ep"), 90);
+        m_stepBtn->setToolTip("Advance 10 epochs incrementally");
         connect(m_stepBtn, &QPushButton::clicked, [this]() {
             if (g_bridge.isTraining) return;
             ExperimentConfig cfg = currentConfig();
+            cfg.epochs = 10;
             g_bridge.resetLive();
             m_resultsShownFor = false;
             m_seenSeq = g_bridge.runSeq;
@@ -1673,8 +1715,10 @@ private:
                 g_bridge.isTraining = false;
             });
         });
-        modelRow->addWidget(m_stepBtn);
-        outer->addLayout(modelRow);
+        paceRow->addWidget(paceLbl);
+        paceRow->addWidget(m_speedSlider, 1);
+        paceRow->addWidget(m_stepBtn);
+        outer->addLayout(paceRow);
         m_trainBtn = new QPushButton(QStringLiteral("START TRAINING"));
         m_trainBtn->setObjectName(QStringLiteral("trainBtn"));
         m_trainBtn->setCursor(Qt::PointingHandCursor);
@@ -1755,36 +1799,36 @@ private:
 
     void applyTheme() {
         setStyleSheet(QStringLiteral(
-            "QMainWindow, QWidget#qt_top { background:#0C0D14; }"
-            "QFrame#topbar { background:#151722; border:none; border-bottom:1px solid #232738; }"
-            "QFrame#card { background:#13151F; border:1px solid #25293B; border-radius:2px; }"
-            "QFrame#panel { background:#181A24; border:1px solid #2A2E40; border-radius:2px; }"
-            "QLabel { color:#E8EAF0; }"
-            "QPushButton { background:#1B1E2B; color:#E8EAF0; border:1px solid #2E3448; border-radius:2px; padding:7px 10px; }"
-            "QPushButton:hover { border:1px solid #2563EB; }"
-            "QPushButton:checked { background:#2563EB; border:1px solid #7FB3E8; }"
-            "QPushButton:disabled { background:#14161F; color:#6A7080; border:1px solid #232738; }"
-            "QPushButton#trainBtn { background:#16A34A; border:1px solid #22C55E; border-radius:3px; }"
-            "QPushButton#trainBtn:hover { background:#18B456; }"
-            "QPushButton#stopBtn { background:#7F1D1D; border:1px solid #EF4444; border-radius:3px; }"
-            "QPushButton#stopBtn:hover { background:#991B1B; }"
-            "QSlider::groove:horizontal { background:#2A2E40; height:8px; border-radius:2px; }"
-            "QSlider::handle:horizontal { background:#E8EAF0; width:12px; margin:-7px 0; border-radius:2px; }"
-            "QSlider::sub-page:horizontal { background:#5AA9E6; border-radius:2px; }"
-            "QSpinBox, QComboBox, QDoubleSpinBox { background:#1B1E2B; color:#E8EAF0; border:1px solid #2E3448; border-radius:2px; padding:4px; }"
-            "QComboBox QAbstractItemView { background:#1B1E2B; color:#E8EAF0; selection-background-color:#2563EB; }"
-            "QCheckBox { color:#C9CDD8; }"
-            "QStatusBar { background:#11131C; color:#8A90A0; border-top:1px solid #232738; }"
-            "QToolTip { background:#000000; color:#E8EAF0; border:1px solid #3A3F52; }"
-            "QTableWidget { background:#181A24; color:#E8EAF0; gridline-color:#2A2E40; border:1px solid #2A2E40; }"
+            "QMainWindow, QWidget#qt_top { background:#0A0D14; }"
+            "QFrame#topbar { background:#0E131F; border:none; border-bottom:1px solid #1E2638; }"
+            "QFrame#card { background:#111622; border:1px solid #1E273A; border-radius:8px; }"
+            "QFrame#panel { background:#151C2C; border:1px solid #232F46; border-radius:6px; }"
+            "QLabel { color:#E2E8F0; }"
+            "QPushButton { background:#172032; color:#E2E8F0; border:1px solid #273650; border-radius:6px; padding:6px 12px; font-weight:500; }"
+            "QPushButton:hover { background:#1F2B42; border:1px solid #3B82F6; }"
+            "QPushButton:checked { background:#2563EB; color:#FFFFFF; border:1px solid #60A5FA; }"
+            "QPushButton:disabled { background:#101522; color:#475569; border:1px solid #1A2234; }"
+            "QPushButton#trainBtn { background:qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669); color:#FFFFFF; border:none; border-radius:6px; }"
+            "QPushButton#trainBtn:hover { background:#10B981; }"
+            "QPushButton#stopBtn { background:qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #EF4444, stop:1 #B91C1C); color:#FFFFFF; border:none; border-radius:6px; }"
+            "QPushButton#stopBtn:hover { background:#DC2626; }"
+            "QSlider::groove:horizontal { background:#1E273A; height:6px; border-radius:3px; }"
+            "QSlider::handle:horizontal { background:#F8FAFC; width:14px; height:14px; margin:-4px 0; border-radius:7px; }"
+            "QSlider::sub-page:horizontal { background:#3B82F6; border-radius:3px; }"
+            "QSpinBox, QComboBox, QDoubleSpinBox { background:#151C2C; color:#F8FAFC; border:1px solid #273650; border-radius:6px; padding:5px 8px; }"
+            "QComboBox QAbstractItemView { background:#151C2C; color:#F8FAFC; selection-background-color:#2563EB; border:1px solid #273650; }"
+            "QCheckBox { color:#CBD5E1; }"
+            "QStatusBar { background:#0A0D14; color:#64748B; border-top:1px solid #1E2638; }"
+            "QToolTip { background:#0F172A; color:#F8FAFC; border:1px solid #334155; border-radius:6px; padding:6px; font-size:11px; }"
+            "QTableWidget { background:#151C2C; color:#F8FAFC; gridline-color:#232F46; border:1px solid #232F46; border-radius:6px; }"
             "QScrollArea { background:transparent; border:none; }"
-            "QScrollBar:vertical { background:transparent; width:12px; margin:0; border:none; }"
-            "QScrollBar::handle:vertical { background:#2A2E40; min-height:30px; border-radius:6px; }"
-            "QScrollBar::handle:vertical:hover { background:#3A3F52; }"
+            "QScrollBar:vertical { background:transparent; width:10px; margin:0; border:none; }"
+            "QScrollBar::handle:vertical { background:#1E273A; min-height:30px; border-radius:5px; }"
+            "QScrollBar::handle:vertical:hover { background:#2E3D5B; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; border:none; }"
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:none; border:none; }"
-            "QHeaderView::section { background:#1B1E2B; color:#C9CDD8; border:1px solid #2A2E40; padding:4px; }"
-            "QDialog { background:#13151F; }"
+            "QHeaderView::section { background:#172032; color:#CBD5E1; border:1px solid #232F46; padding:5px; }"
+            "QDialog { background:#111622; }"
         ));
     }
 

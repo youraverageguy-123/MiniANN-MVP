@@ -33,6 +33,14 @@ for %%f in (src\activation.cpp src\neuron.cpp src\layer.cpp src\network.cpp src\
 )
 set LIB=obj\*.o
 
+if /i "%1"=="gui" goto build_gui
+if /i "%1"=="clean" (
+    call clean.bat
+    exit /b 0
+)
+if /i "%1"=="demos" goto build_demos
+if /i "%1"=="tests" goto build_tests
+
 echo [1/11] Building xor_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\xor_demo.cpp -o xor_demo.exe
 if errorlevel 1 exit /b 1
@@ -73,14 +81,19 @@ echo [10/11] Building test_correctness.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_correctness.cpp -o test_correctness.exe
 if errorlevel 1 exit /b 1
 
-echo [11/11] Building gui_qt.exe (Qt Widgets, optional)...
+goto done
+
+:build_gui
+echo [GUI] Building gui_qt.exe (Qt Widgets)...
 g++ %FLAGS% %INCL% %QTINC% %LIB% demos\gui_qt.cpp %QTLIBS% -o gui_qt.exe
 if errorlevel 1 (
-    echo [WARN] gui_qt.exe skipped - install Qt6 package mingw-w64-ucrt-x86_64-qt6-base,
-    echo        or close the running gui_qt.exe window: a locked exe cannot be relinked.
-    echo        Core library and console demos above are unaffected.
+    echo [WARN] gui_qt.exe failed to build. Ensure window is closed and Qt6 is installed.
+    exit /b 1
 )
+echo [GUI] gui_qt.exe built successfully!
+exit /b 0
 
+:done
 echo.
 echo ====================================
 echo  All targets built successfully!
