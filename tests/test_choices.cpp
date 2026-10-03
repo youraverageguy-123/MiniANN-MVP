@@ -81,5 +81,13 @@ int main() {
     }
 
     std::cout << "NEW ACTIVATIONS + FACTORIES PASS\n";
+    // Runtime identity (polymorphism): every factory product names itself.
+    assert(LossFactory::create("mse")->name() == "mse");
+    assert(LossFactory::create("bce")->name() == "bce");
+    assert(LossFactory::create("cce")->name() == "cce");
+    assert(OptimizerFactory::create("sgd", 0.01)->name() == "sgd");
+    assert(OptimizerFactory::create("momentum", 0.01)->name() == "momentum");
+    assert(OptimizerFactory::create("adam", 0.01)->name() == "adam");
+    std::cout << "LOSS + OPTIMIZER NAMES PASS\n";
     return 0;
 }

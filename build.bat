@@ -1,12 +1,18 @@
 @echo off
 REM ========================================================
 REM Build MiniANN MVP and Qt Widgets GUI (two-stage: lib once, link each)
+REM TOOLCHAIN: build with an x86_64 UCRT g++ (MSYS2 ucrt64 or WinLibs-POSIX-UCRT).
+REM MSVCRT-built exes + UCRT Qt DLLs segfault in <fstream> (Iris preset died
+REM loading its CSV). If plain `g++` is MSVCRT, prepend the UCRT bin dir first:
+REM   set PATH=C:\...\WinLibs.POSIX.UCRT\mingw64\bin;%PATH%
 REM Qt6 note: needs MSYS2 mingw-w64-ucrt-x86_64-qt6-base installed.
 REM No moc step required: demos\gui_qt.cpp uses no Q_OBJECT.
 REM ========================================================
 
 set INCL=-Iinclude
-set FLAGS=-std=c++17 -O2 -Wall -Wextra -Wpedantic
+set FLAGS=-std=c++17 -O2 -Wall -Wextra -Wpedantic -static-libstdc++ -static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic
+REM Static runtime: exes never depend on PATH-ordered MinGW DLLs (a second Qt
+REM copy on PATH, e.g. MiKTeX, plus chained MinGW runtimes segfaulted fstream).
 set QTINC=-IC:/msys64/ucrt64/include/qt6 -IC:/msys64/ucrt64/include/qt6/QtWidgets -IC:/msys64/ucrt64/include/qt6/QtGui -IC:/msys64/ucrt64/include/qt6/QtCore -DQT_WIDGETS_LIB -DQT_GUI_LIB -DQT_CORE_LIB
 set QTLIBS=-mwindows -LC:/msys64/ucrt64/lib -lQt6Widgets -lQt6Gui -lQt6Core
 
@@ -68,3 +74,6 @@ echo ====================================
 echo  All targets built successfully!
 echo ====================================
 echo Run gui_qt.exe to launch the clickable GUI (needs Qt6).
+echo NOTE: after building, run deploy_qt.ps1 once so gui_qt.exe works by
+echo double-click even if another Qt (e.g. MiKTeX) is on PATH:
+echo   powershell -ExecutionPolicy Bypass -File .\deploy_qt.ps1

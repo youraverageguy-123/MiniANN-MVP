@@ -11,6 +11,7 @@ class IOptimizer {
 public:
     virtual ~IOptimizer() = default;
     virtual void step(NeuralNetwork& net, std::size_t batchSize) = 0;
+    virtual std::string name() const = 0; // runtime identity (viva: polymorphism)
 };
 
 class SGD : public IOptimizer {
@@ -20,6 +21,7 @@ public:
     explicit SGD(double learningRate) : lr_(learningRate) {}
     void step(NeuralNetwork& net, std::size_t batchSize) override;
     double lr() const { return lr_; }
+    std::string name() const override { return "sgd"; }
 };
 
 class Adam : public IOptimizer {
@@ -44,6 +46,7 @@ public:
     };
     State state() const;
     void restore(const State& s);
+    std::string name() const override { return "adam"; }
 };
 
 // Classical momentum: velocity v <- mu*v - lr*(grad/B), params += v.
@@ -64,6 +67,7 @@ public:
     };
     State state() const;
     void restore(const State& s);
+    std::string name() const override { return "momentum"; }
 };
 
 // Hyperparameters exposed to the UI. Defaults match each class's ctor defaults.

@@ -46,6 +46,7 @@
 #include <QStyleFactory>
 #include <QScrollArea>
 #include <QFile>
+#include <QDir>
 #include <QTextStream>
 #include <QFileInfo>
 
@@ -170,6 +171,29 @@ public:
         m_hasVal = hasVal && !m_val.empty();
         m_liveEpoch = liveEpoch;
         update();
+    }
+
+    void copyFrom(const PlotWidget& o) {
+        m_train = o.m_train;
+        m_val = o.m_val;
+        m_accuracy = o.m_accuracy;
+        m_hasVal = o.m_hasVal;
+        m_liveEpoch = o.m_liveEpoch;
+        update();
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent*) override {
+        if (m_train.size() < 2) return;
+        auto* dlg = new QDialog(window());
+        dlg->setWindowTitle(m_accuracy ? QStringLiteral("Accuracy") : QStringLiteral("Loss curves"));
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->resize(800, 560);
+        auto* lay = new QVBoxLayout(dlg);
+        lay->setContentsMargins(6, 6, 6, 6);
+        auto* big = new PlotWidget;
+        big->copyFrom(*this);
+        lay->addWidget(big);
+        dlg->show();
     }
 
 protected:
@@ -325,6 +349,7 @@ class BoundaryWidget : public QWidget {
 public:
     explicit BoundaryWidget(QWidget* parent = nullptr) : QWidget(parent) {
         setMinimumHeight(200);
+        setMouseTracking(true);
     }
 
     void setData(QImage grid, std::vector<QPointF> trainPts, std::vector<int> trainCls,
@@ -337,6 +362,25 @@ public:
         m_testCls = std::move(testCls);
         m_x0 = x0; m_x1 = x1; m_y0 = y0; m_y1 = y1;
         m_ready = ready;
+        update();
+    }
+
+    // Live predictor for hover tooltips (trained net, may be null).
+    void setPredictor(std::shared_ptr<NeuralNetwork> net, double thresh = 0.5) {
+        m_net = std::move(net);
+        m_thresh = thresh;
+    }
+
+    void copyFrom(const BoundaryWidget& o) {
+        m_grid = o.m_grid;
+        m_trainPts = o.m_trainPts;
+        m_trainCls = o.m_trainCls;
+        m_testPts = o.m_testPts;
+        m_testCls = o.m_testCls;
+        m_x0 = o.m_x0; m_x1 = o.m_x1; m_y0 = o.m_y0; m_y1 = o.m_y1;
+        m_ready = o.m_ready;
+        m_net = o.m_net;
+        m_thresh = o.m_thresh;
         update();
     }
 
@@ -383,6 +427,88 @@ protected:
         p.setFont(f);
         p.drawText(QRect(area.left(), area.bottom() + 4, area.width(), 18), Qt::AlignHCenter,
                    QStringLiteral("x1 ->                                   x2 ^   (rings = test points)"));
+        if (m_hover.x() >= 0 && m_ready && !m_grid.isNull()) {
+            p.setPen(QPen(QColor(255, 255, 255, 90), 1));
+            p.drawLine(m_hover.x(), area.top(), m_hover.x(), area.bottom());
+            p.drawLine(area.left(), m_hover.y(), area.right(), m_hover.y());
+        }
+    }
+
+    QRect plotArea() const {
+        const int m = 14;
+        return QRect(m, m + 16, width() - 2 * m, height() - 2 * m - 22);
+    }
+
+    void mouseMoveEvent(QMouseEvent* e) override {
+        m_hover = QPoint(-1, -1);
+        QRect area = plotArea();
+        if (!m_ready || m_grid.isNull() || !area.contains(e->pos())) {
+            QToolTip::hideText();
+            update();
+            return;
+        }
+        double dx = e->pos().x() - area.left();
+        double dy = area.bottom() - e->pos().y();
+        double x1 = m_x0 + dx / std::max(1, area.width()) * (m_x1 - m_x0);
+        double x2 = m_y0 + dy / std::max(1, area.height()) * (m_y1 - m_y0);
+        QString tip = QString::asprintf("x1=%.3f  x2=%.3f", x1, x2);
+        if (m_net && m_net->numLayers() > 0) {
+            Vector out = m_net->predict({x1, x2});
+            if (out.size() == 1) {
+                int c = out[0] >= m_thresh ? 1 : 0;
+                double conf = c ? out[0] : 1.0 - out[0];
+                tip += QString::asprintf("\n→ class %d  (%.1f%%)", c, conf * 100.0);
+            } else if (!out.empty()) {
+                std::size_t b = 0;
+                for (std::size_t k = 1; k < out.size(); ++k)
+                    if (out[k] > out[b]) b = k;
+                tip += QString::asprintf("\n→ class %llu  (%.1f%%)",
+                    (unsigned long long)b, out[b] * 100.0);
+            }
+        }
+        // Nearest training point, so hovering doubles as a data inspector.
+        double best = 1e300;
+        int bestC = -1;
+        bool bestTest = false;
+        auto consider = [&](const std::vector<QPointF>& pts, const std::vector<int>& cls, bool test) {
+            for (std::size_t i = 0; i < pts.size(); ++i) {
+                double ddx = pts[i].x() - x1, ddy = pts[i].y() - x2;
+                double d = ddx * ddx + ddy * ddy;
+                if (d < best) {
+                    best = d;
+                    bestC = (i < cls.size()) ? cls[i] : -1;
+                    bestTest = test;
+                }
+            }
+        };
+        consider(m_trainPts, m_trainCls, false);
+        consider(m_testPts, m_testCls, true);
+        if (bestC >= 0)
+            tip += QString::asprintf("\nnearest: class %d (%.3f away, %s)", bestC,
+                std::sqrt(best), bestTest ? "test" : "train");
+        m_hover = e->pos();
+        QToolTip::showText(e->globalPosition().toPoint(), tip, this);
+        update();
+    }
+
+    void leaveEvent(QEvent*) override {
+        m_hover = QPoint(-1, -1);
+        QToolTip::hideText();
+        update();
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent*) override {
+        if (!m_ready || m_grid.isNull()) return;
+        auto* dlg = new QDialog(window());
+        dlg->setWindowTitle(QStringLiteral("Decision boundary"));
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->resize(800, 620);
+        auto* lay = new QVBoxLayout(dlg);
+        lay->setContentsMargins(6, 6, 6, 6);
+        auto* big = new BoundaryWidget;
+        big->copyFrom(*this);
+        lay->addWidget(big);
+        dlg->show();
     }
 
 private:
@@ -391,6 +517,9 @@ private:
     std::vector<int> m_trainCls, m_testCls;
     double m_x0 = 0, m_x1 = 1, m_y0 = 0, m_y1 = 1;
     bool m_ready = false;
+    std::shared_ptr<NeuralNetwork> m_net;
+    double m_thresh = 0.5;
+    QPoint m_hover{-1, -1};
 };
 
 // ------------------------------------------------------- network diagram
@@ -404,9 +533,28 @@ class NetWidget : public QWidget {
 public:
     explicit NetWidget(QWidget* parent = nullptr) : QWidget(parent) {
         setMinimumHeight(200);
+        setMouseTracking(true);
     }
+    // Skeleton preview from config (no weights yet).
     void setArch(ArchDesc a) {
         m_arch = std::move(a);
+        m_net.reset();
+        m_tag = QStringLiteral("PREVIEW — edit config, then START TRAINING");
+        update();
+    }
+    // Trained net: nodes show live firing on the probe input.
+    void setNet(std::shared_ptr<NeuralNetwork> net, Vector probe, QString tag) {
+        m_net = std::move(net);
+        m_probe = std::move(probe);
+        m_tag = std::move(tag);
+        m_arch.valid = false;
+        update();
+    }
+    void copyFrom(const NetWidget& o) {
+        m_arch = o.m_arch;
+        m_net = o.m_net;
+        m_probe = o.m_probe;
+        m_tag = o.m_tag;
         update();
     }
 
@@ -416,76 +564,230 @@ protected:
         p.setRenderHint(QPainter::Antialiasing, true);
         p.fillRect(rect(), QColor(0x09, 0x0A, 0x0F));
         const int m = 14;
-        QRect area(m, m + 8, width() - 2 * m, height() - 2 * m - 40);
+        // Top inset leaves room for the source tag; bottom for column labels.
+        QRect area(m, m + 22, width() - 2 * m, height() - 2 * m - 22 - 26);
         if (area.width() < 40 || area.height() < 40) return;
         p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRect(area.adjusted(0, 0, -1, -1));
-        if (!m_arch.valid || m_arch.sizes.size() < 2) {
+
+        // Resolve layers to draw: trained net wins, else skeleton.
+
+        // Resolve layers to draw: trained net wins, else skeleton.
+        struct Col { QString name; std::size_t n; };
+        std::vector<Col> cols;
+        if (m_net && m_net->numLayers() > 0) {
+            cols.push_back({QStringLiteral("Input"), m_net->layers()[0].inputSize()});
+            for (std::size_t l = 0; l < m_net->numLayers(); ++l) {
+                const auto& layer = m_net->layers()[l];
+                QString an = layer.neurons().empty()
+                    ? QStringLiteral("?")
+                    : QString::fromStdString(layer.neurons()[0].activation().name());
+                bool last = (l + 1 == m_net->numLayers());
+                cols.push_back({(last ? QStringLiteral("Output·") : QStringLiteral("H%1·").arg(l + 1)) + an,
+                                last ? layer.size() : layer.size()});
+            }
+        } else if (m_arch.valid && m_arch.sizes.size() >= 2) {
+            for (std::size_t l = 0; l < m_arch.sizes.size(); ++l)
+                cols.push_back({m_arch.names[l], m_arch.sizes[l]});
+        } else {
             p.setPen(QColor(0x8A, 0x90, 0xA0));
             p.drawText(area, Qt::AlignCenter,
                        QStringLiteral("Train a network (or load a model)\nto see its architecture diagram."));
             return;
         }
-        std::size_t L = m_arch.sizes.size();
+        // Firing values for the probe (trained net only).
+        std::vector<std::vector<double>> fire;
+        if (m_net && !m_probe.empty()) {
+            Vector cur = m_probe;
+            fire.push_back(cur);
+            for (auto& layer : m_net->layers()) {
+                cur = layer.forward(cur);
+                fire.push_back(cur);
+            }
+        }
+        const std::size_t L = cols.size();
+        const std::size_t kShowMax = 8; // declutter: never draw more than 8 nodes/column
+        // Column centers are inset half a slot so first/last labels stay inside.
+        const double slot = (double)area.width() / (double)L;
+        auto colX = [&](std::size_t l) {
+            return (L == 1) ? area.center().x() : area.left() + slot * ((double)l + 0.5);
+        };
         std::vector<std::vector<QPointF>> pts(L);
         std::vector<std::size_t> shown(L);
+        m_hit.assign(L, {});
         for (std::size_t l = 0; l < L; ++l) {
-            shown[l] = std::min<std::size_t>(m_arch.sizes[l], 12);
-            double cx = area.left() + (L == 1 ? area.width() / 2.0
-                                              : (double)l / (double)(L - 1) * area.width());
+            shown[l] = std::min<std::size_t>(cols[l].n, kShowMax);
+            double cx = colX(l);
             for (std::size_t i = 0; i < shown[l]; ++i) {
                 double cy = (shown[l] == 1) ? area.center().y()
                     : area.top() + 18 + (double)i / (double)(shown[l] - 1) * (area.height() - 36);
                 pts[l].push_back(QPointF(cx, cy));
+                m_hit[l].push_back(QRectF(cx - 11, cy - 11, 22, 22));
             }
         }
-        // Edges (capped: draw every k-th when huge).
+        // Edges (capped count, faint so nodes stay readable).
         std::size_t edges = 0;
         for (std::size_t l = 1; l < L; ++l) edges += shown[l - 1] * shown[l];
-        std::size_t k = edges > 800 ? (edges + 799) / 800 : 1;
-        p.setPen(QPen(QColor(0x5A, 0xA9, 0xE6, 70), 1));
+        std::size_t k = edges > 350 ? (edges + 349) / 350 : 1;
+        p.setPen(QPen(QColor(0x5A, 0xA9, 0xE6, 30), 1));
         std::size_t e = 0;
         for (std::size_t l = 1; l < L; ++l)
             for (auto a : pts[l - 1])
                 for (auto b : pts[l]) {
                     if ((e++ % k) == 0) p.drawLine(a, b);
                 }
+        // Nodes: fill brightness = firing (trained) else flat.
         for (std::size_t l = 0; l < L; ++l) {
-            for (auto c : pts[l]) {
-                p.setBrush(QColor(0x1B, 0x1E, 0x2B));
+            for (std::size_t i = 0; i < shown[l]; ++i) {
+                double f = -1.0;
+                if (l < fire.size() && i < fire[l].size()) {
+                    f = fire[l][i];
+                    if (fire[l].size() > 1) f = std::max(0.0, std::min(1.0, f));
+                }
+                QColor fill = (f < 0.0) ? QColor(0x1B, 0x1E, 0x2B)
+                    : QColor::fromHslF(0.58, 0.75, 0.12 + 0.35 * std::max(0.0, std::min(1.0, f)));
+                p.setBrush(fill);
                 p.setPen(QPen(QColor(0x7F, 0xB3, 0xE8), 1.5));
-                p.drawEllipse(c, 9, 9);
+                p.drawEllipse(pts[l][i], 9, 9);
             }
-            if (shown[l] < m_arch.sizes[l]) {
+            if (shown[l] < cols[l].n) {
                 p.setPen(QColor(0x8A, 0x90, 0xA0));
                 QFont f = font();
                 f.setPointSize(8);
                 p.setFont(f);
                 double cx = pts[l][0].x();
                 p.drawText(QRect(int(cx) - 40, area.bottom() - 34, 80, 16), Qt::AlignHCenter,
-                           QStringLiteral("+") + QString::number((unsigned long long)(m_arch.sizes[l] - shown[l])));
+                           QStringLiteral("+") + QString::number((unsigned long long)(cols[l].n - shown[l])));
             }
         }
+        // Column labels: short, elided to the column slot (no overlap).
         QFont lf = font();
-        lf.setPointSize(9);
-        lf.setBold(true);
+        lf.setPointSize(8);
         p.setFont(lf);
         p.setPen(QColor(0xD0, 0xD3, 0xDB));
         for (std::size_t l = 0; l < L; ++l) {
-            double cx = (L == 1) ? area.center().x()
-                                 : area.left() + (double)l / (double)(L - 1) * area.width();
-            QString t = m_arch.names[l] + QString::asprintf(" [%llu]", (unsigned long long)m_arch.sizes[l]);
+            double cx = colX(l);
+            QString t = cols[l].name + QString::asprintf(" [%llu]", (unsigned long long)cols[l].n);
+            t = fontMetrics().elidedText(t, Qt::ElideRight, int(slot) - 4);
             int w = fontMetrics().horizontalAdvance(t);
             p.drawText(QRect(int(cx) - w / 2, area.bottom() + 4, w + 4, 18), Qt::AlignLeft, t);
         }
+        // Source tag at the TOP inside the frame (was colliding with labels).
+        if (!m_tag.isEmpty()) {
+            QFont tf = font();
+            tf.setPointSize(8);
+            tf.setItalic(true);
+            p.setFont(tf);
+            p.setPen(QColor(0x8A, 0x90, 0xA0));
+            QString tag = fontMetrics().elidedText(m_tag, Qt::ElideRight, area.width() - 8);
+            p.drawText(QRect(area.left() + 4, area.top() + 2, area.width() - 8, 16),
+                       Qt::AlignLeft | Qt::AlignTop, tag);
+        }
+    }
+
+    void mouseMoveEvent(QMouseEvent* e) override {
+        if (!m_net || m_hit.empty()) {
+            QToolTip::hideText();
+            return;
+        }
+        for (std::size_t l = 0; l < m_hit.size(); ++l)
+            for (std::size_t i = 0; i < m_hit[l].size(); ++i)
+                if (m_hit[l][i].contains(e->pos())) {
+                    // Layer l==0 is the input column; net layers are offset by one.
+                    QString tip;
+                    if (l == 0) {
+                        double v = (i < m_probe.size()) ? m_probe[i] : 0.0;
+                        tip = QString::asprintf("Input x%llu = %.4f", (unsigned long long)i + 1, v);
+                    } else {
+                        std::size_t li = l - 1;
+                        if (li < m_net->numLayers() && i < m_net->layers()[li].size()) {
+                            const Neuron& n = m_net->layers()[li].neurons()[i];
+                            QString ws;
+                            for (std::size_t k = 0; k < std::min<std::size_t>(n.weights().size(), 6); ++k)
+                                ws += QString::asprintf("%s%.3f", k ? ", " : "", n.weights()[k]);
+                            if (n.weights().size() > 6) ws += QStringLiteral(", …");
+                            double out = n.lastOutput();
+                            tip = QString::asprintf("L%lluN%llu  b=%.3f  out=%.3f\nw=[%s]",
+                                (unsigned long long)li, (unsigned long long)i,
+                                n.bias(), out, ws.toLatin1().constData());
+                        }
+                    }
+                    if (!tip.isEmpty()) QToolTip::showText(e->globalPosition().toPoint(), tip, this);
+                    return;
+                }
+        QToolTip::hideText();
+    }
+
+    void leaveEvent(QEvent*) override { QToolTip::hideText(); }
+
+    void mouseDoubleClickEvent(QMouseEvent*) override {
+        auto* dlg = new QDialog(window());
+        dlg->setWindowTitle(m_tag.isEmpty() ? QStringLiteral("Network") : m_tag);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->resize(900, 650);
+        auto* lay = new QVBoxLayout(dlg);
+        lay->setContentsMargins(6, 6, 6, 6);
+        auto* big = new NetWidget;
+        big->copyFrom(*this);
+        lay->addWidget(big);
+        dlg->show();
     }
 
 private:
     ArchDesc m_arch;
+    std::shared_ptr<NeuralNetwork> m_net;
+    Vector m_probe;
+    QString m_tag;
+    std::vector<std::vector<QRectF>> m_hit;
 };
 
 // ---------------------------------------------------------------- main window
+// Collapsible left-panel group: one-line header, content hidden on demand.
+// Minimal look — a collapsed group is a single row, an expanded one is flat.
+class CollapsibleSection : public QWidget {
+public:
+    CollapsibleSection(const QString& title, bool expanded, QWidget* parent = nullptr)
+        : QWidget(parent), m_title(title) {
+        auto* outer = new QVBoxLayout(this);
+        outer->setContentsMargins(0, 0, 0, 0);
+        outer->setSpacing(4);
+        m_head = new QPushButton;
+        m_head->setCursor(Qt::PointingHandCursor);
+        m_head->setFlat(true);
+        m_head->setMinimumHeight(28);
+        m_head->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        m_head->setStyleSheet(QStringLiteral(
+            "QPushButton { text-align: left; border: none; color: #E8EAF0; }"
+            "QPushButton:hover { background: #1B1E2B; }"));
+        QFont hf = m_head->font();
+        hf.setPointSize(10);
+        hf.setBold(true);
+        m_head->setFont(hf);
+        connect(m_head, &QPushButton::clicked, [this]() { setExpanded(!m_expanded); });
+        outer->addWidget(m_head);
+        m_body = new QWidget;
+        m_lay = new QVBoxLayout(m_body);
+        m_lay->setContentsMargins(0, 0, 0, 0);
+        m_lay->setSpacing(10);
+        outer->addWidget(m_body);
+        setExpanded(expanded);
+    }
+    QVBoxLayout* content() { return m_lay; }
+    void setExpanded(bool e) {
+        m_expanded = e;
+        m_body->setVisible(e);
+        m_head->setText(QString::fromLatin1(m_expanded ? "- " : "+ ") + m_title);
+    }
+
+private:
+    QString m_title;
+    QPushButton* m_head = nullptr;
+    QWidget* m_body = nullptr;
+    QVBoxLayout* m_lay = nullptr;
+    bool m_expanded = true;
+};
+
 class MainWindow : public QMainWindow {
 public:
     enum UiState { ST_IDLE, ST_READY, ST_TRAINING, ST_COMPLETED, ST_STOPPED, ST_ERROR };
@@ -557,14 +859,8 @@ public:
         geo("summary", m_summaryLbl);
         geo("arch", m_archLbl);
         geo("warn", m_warnLbl);
-        if (!m_layerRows[0].acts.empty()) geo("act0", m_layerRows[0].acts[0]);
+        if (m_hiddenCfgBtn) geo("hiddenCfg", m_hiddenCfgBtn);
         QString dir = QFileInfo(path).absolutePath() + QStringLiteral("/");
-        if (!m_dsBtns.empty()) m_dsBtns[0]->grab().save(dir + QStringLiteral("w_ds.png"));
-        if (!m_layerRows[0].acts.empty()) {
-            m_layerRows[0].acts[1]->grab().save(dir + QStringLiteral("w_act.png"));
-            auto* spin = m_layerRows[0].size;
-            spin->grab().save(dir + QStringLiteral("w_spin.png"));
-        }
         m_trainBtn->grab().save(dir + QStringLiteral("w_train.png"));
         m_tabLoss->grab().save(dir + QStringLiteral("w_tab.png"));
     }
@@ -622,9 +918,9 @@ private:
     int m_seed = 42;
     bool m_shuffle = true;
     int m_normMode = 1;
-    int m_numHidden = 2;
-    int m_hiddenN[4] = {8, 8, 8, 8};
-    ActiveActivation m_hiddenAct[4] = {ACT_TANH, ACT_RELU, ACT_RELU, ACT_RELU};
+    struct HiddenCfg { int n = 8; ActiveActivation act = ACT_RELU; };
+    static constexpr int kMaxHidden = 8;
+    std::vector<HiddenCfg> m_hidden = {{8, ACT_TANH}, {8, ACT_RELU}};
     UiState m_state = ST_IDLE;
     bool m_resultsShownFor = false;
     unsigned m_seenSeq = 0;
@@ -633,6 +929,9 @@ private:
     std::string m_previewFp;
     PreparedData m_preview;
     std::string m_previewErr;
+    // Fingerprint of the config whose net is currently drawn (trained or
+    // preview). A stale trained net never poses as the current config.
+    std::string m_shownNetFp;
 
     // ---- widgets ----
     QLabel* m_epochLbl = nullptr;
@@ -651,8 +950,8 @@ private:
     QCheckBox* m_headerChk = nullptr;
     QLabel* m_layersLbl = nullptr;
     QLabel* m_archLbl = nullptr;
-    struct LayerRow { QWidget* row; QLabel* name; QSpinBox* size; std::vector<QPushButton*> acts; };
-    LayerRow m_layerRows[4];
+    QLabel* m_hiddenSumLbl = nullptr;
+    QPushButton* m_hiddenCfgBtn = nullptr;
     QComboBox* m_outActCombo = nullptr;
     QLabel* m_epochValLbl = nullptr;
     QSlider* m_epochSlider = nullptr;
@@ -745,9 +1044,9 @@ private:
         c.normMode = m_normMode;
         c.seed = (unsigned)m_seed;
         c.shuffle = m_shuffle;
-        for (int i = 0; i < m_numHidden; ++i) {
-            c.hidden.push_back(m_hiddenN[i]);
-            c.hiddenActs.push_back(actToName(m_hiddenAct[i]));
+        for (int i = 0; i < (int)m_hidden.size(); ++i) {
+            c.hidden.push_back(m_hidden[(std::size_t)i].n);
+            c.hiddenActs.push_back(actToName(m_hidden[(std::size_t)i].act));
         }
         c.outputAct = m_outputAct;
         c.loss = kLossKeys[(int)m_loss];
@@ -773,10 +1072,18 @@ private:
         m_previewFp = fp;
         m_previewErr.clear();
         try {
+            if (m_dataset == DS_IRIS && !QFile::exists(QStringLiteral("data/iris_small.csv"))) {
+                m_previewErr = "data/iris_small.csv not found (working dir is " +
+                    QDir::currentPath().toStdString() + ") — launch gui_qt.exe from MiniANN_MVP.";
+                m_preview = PreparedData();
+                qWarning("refreshPreview: %s", m_previewErr.c_str());
+                return;
+            }
             m_preview = ExperimentController::prepare(currentConfig());
         } catch (const std::exception& e) {
             m_preview = PreparedData();
             m_previewErr = e.what();
+            qWarning("refreshPreview: %s", m_previewErr.c_str());
         }
     }
 
@@ -797,8 +1104,8 @@ private:
             return "Lin";
         };
         std::string s = inT;
-        for (int i = 0; i < m_numHidden; ++i)
-            s += " -> " + std::to_string(m_hiddenN[i]) + "(" + shortAct(actToName(m_hiddenAct[i])) + ")";
+        for (std::size_t i = 0; i < m_hidden.size(); ++i)
+            s += " -> " + std::to_string(m_hidden[i].n) + "(" + shortAct(actToName(m_hidden[i].act)) + ")";
         s += " -> " + outT + "(" + shortAct(m_outputAct) + ")";
         return s;
     }
@@ -885,7 +1192,9 @@ private:
         lv->addLayout(preRow);
 
         // 1. dataset
-        lv->addWidget(makeSection(QStringLiteral("1. DATASET")));
+        auto* sec1 = new CollapsibleSection(QStringLiteral("1. DATASET"), true, m_configBox);
+        lv->addWidget(sec1);
+        QVBoxLayout* s1 = sec1->content();
         auto* dsRow = new QHBoxLayout;
         dsRow->setSpacing(4);
         for (int i = 0; i < 5; ++i) {
@@ -901,14 +1210,14 @@ private:
                 configChanged();
             });
         }
-        lv->addLayout(dsRow);
+        s1->addLayout(dsRow);
 
         // dataset info (§3.2)
         m_dsInfoLbl = new QLabel;
         m_dsInfoLbl->setObjectName(QStringLiteral("panel"));
         m_dsInfoLbl->setStyleSheet(QStringLiteral("color:#7FB3E8; padding:8px 12px;"));
         m_dsInfoLbl->setWordWrap(true);
-        lv->addWidget(m_dsInfoLbl);
+        s1->addWidget(m_dsInfoLbl);
 
         // CSV options row
         m_csvRow = new QWidget;
@@ -945,10 +1254,12 @@ private:
             if (!path.isEmpty()) loadCsvFile(path);
         });
         csvLay->addWidget(browseBtn);
-        lv->addWidget(m_csvRow);
+        s1->addWidget(m_csvRow);
 
         // 2. architecture (§5)
-        lv->addWidget(makeSection(QStringLiteral("2. ARCHITECTURE")));
+        auto* sec2 = new CollapsibleSection(QStringLiteral("2. ARCHITECTURE"), true, m_configBox);
+        lv->addWidget(sec2);
+        QVBoxLayout* s2 = sec2->content();
         auto* layRow = new QHBoxLayout;
         layRow->setSpacing(6);
         m_layersLbl = new QLabel;
@@ -957,56 +1268,34 @@ private:
         auto* layMinus = makeBtn(QStringLiteral("-"), 30);
         auto* layPlus = makeBtn(QStringLiteral("+"), 30);
         connect(layMinus, &QPushButton::clicked, [this]() {
-            m_numHidden = std::max(1, m_numHidden - 1);
-            configChanged();
+            if (m_hidden.size() > 1) {
+                m_hidden.pop_back();
+                configChanged();
+            }
         });
         connect(layPlus, &QPushButton::clicked, [this]() {
-            m_numHidden = std::min(4, m_numHidden + 1);
-            configChanged();
+            if ((int)m_hidden.size() < kMaxHidden) {
+                m_hidden.push_back({8, ACT_RELU});
+                configChanged();
+            }
         });
         layRow->addWidget(layMinus);
         layRow->addWidget(layPlus);
         layRow->addStretch(1);
-        lv->addLayout(layRow);
+        s2->addLayout(layRow);
         m_archLbl = new QLabel;
         m_archLbl->setStyleSheet(QStringLiteral("color:#7FB3E8;"));
         m_archLbl->setWordWrap(true);
-        lv->addWidget(m_archLbl);
-        for (int i = 0; i < 4; ++i) {
-            auto* row = new QWidget;
-            auto* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(0, 0, 0, 0);
-            rl->setSpacing(4);
-            auto* name = new QLabel;
-            name->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
-            name->setFixedWidth(40);
-            rl->addWidget(name);
-            auto* sz = new QSpinBox;
-            sz->setRange(1, 64);
-            sz->setValue(8);
-            sz->setFixedWidth(56);
-            connect(sz, &QSpinBox::valueChanged, [this, i](int v) {
-                m_hiddenN[i] = v;
-                configChanged();
-            });
-            rl->addWidget(sz);
-            std::vector<QPushButton*> acts;
-            for (int a = 0; a < 5; ++a) {
-                QPushButton* b = makeBtn(QString::fromLatin1(kActLabels[a]));
-                b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-                rl->addWidget(b);
-                acts.push_back(b);
-            }
-            setExclusive(acts);
-            for (int a = 0; a < 5; ++a) {
-                connect(acts[(std::size_t)a], &QPushButton::clicked, [this, i, a]() {
-                    m_hiddenAct[i] = ActiveActivation(a);
-                    configChanged();
-                });
-            }
-            m_layerRows[i] = {row, name, sz, acts};
-            lv->addWidget(row);
-        }
+        s2->addWidget(m_archLbl);
+        // Hidden-layer detail lives in a popup (1-8 layers without clutter).
+        m_hiddenSumLbl = new QLabel;
+        m_hiddenSumLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        m_hiddenSumLbl->setWordWrap(true);
+        s2->addWidget(m_hiddenSumLbl);
+        m_hiddenCfgBtn = makeBtn(QStringLiteral("Configure hidden layers…"));
+        m_hiddenCfgBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        connect(m_hiddenCfgBtn, &QPushButton::clicked, [this]() { openHiddenDialog(); });
+        s2->addWidget(m_hiddenCfgBtn);
         auto* outRow = new QHBoxLayout;
         outRow->setSpacing(6);
         auto* outLbl = new QLabel(QStringLiteral("Output act:"));
@@ -1020,10 +1309,12 @@ private:
             configChanged();
         });
         outRow->addWidget(m_outActCombo, 1);
-        lv->addLayout(outRow);
+        s2->addLayout(outRow);
 
         // 3. training (§9)
-        lv->addWidget(makeSection(QStringLiteral("3. TRAINING")));
+        auto* sec3 = new CollapsibleSection(QStringLiteral("3. TRAINING"), true, m_configBox);
+        lv->addWidget(sec3);
+        QVBoxLayout* s3 = sec3->content();
         auto* epTop = new QHBoxLayout;
         epTop->setSpacing(8);
         m_epochValLbl = new QLabel;
@@ -1037,7 +1328,7 @@ private:
         epLab->setStyleSheet(QStringLiteral("color:#8A90A0;"));
         epTop->addWidget(epLab);
         epTop->addStretch(1);
-        lv->addLayout(epTop);
+        s3->addLayout(epTop);
         auto* epRow = new QHBoxLayout;
         epRow->setSpacing(6);
         m_epochSlider = new QSlider(Qt::Horizontal);
@@ -1077,7 +1368,7 @@ private:
         });
         epRow->addWidget(epMinus);
         epRow->addWidget(epPlus);
-        lv->addLayout(epRow);
+        s3->addLayout(epRow);
 
         auto* batchRow = new QHBoxLayout;
         batchRow->setSpacing(8);
@@ -1095,7 +1386,7 @@ private:
         m_effBatchLbl->setStyleSheet(QStringLiteral("color:#8A90A0;"));
         batchRow->addWidget(m_effBatchLbl);
         batchRow->addStretch(1);
-        lv->addLayout(batchRow);
+        s3->addLayout(batchRow);
 
         auto* lrRow = new QHBoxLayout;
         lrRow->setSpacing(8);
@@ -1129,7 +1420,7 @@ private:
         });
         lrRow->addWidget(m_shuffleChk);
         lrRow->addStretch(1);
-        lv->addLayout(lrRow);
+        s3->addLayout(lrRow);
 
         auto* normRow = new QHBoxLayout;
         normRow->setSpacing(8);
@@ -1143,10 +1434,13 @@ private:
         });
         normRow->addWidget(m_normCombo);
         normRow->addStretch(1);
-        lv->addLayout(normRow);
+        s3->addLayout(normRow);
 
-        // 4. loss & optimizer (§7, §8)
-        lv->addWidget(makeSection(QStringLiteral("4. LOSS & OPTIMIZER")));
+        // 4. loss & optimizer (§7, §8) — collapsed by default; warnings stay
+        // visible below the section so they are never hidden with it.
+        auto* sec4 = new CollapsibleSection(QStringLiteral("4. LOSS & OPTIMIZER"), false, m_configBox);
+        lv->addWidget(sec4);
+        QVBoxLayout* s4 = sec4->content();
         auto* lossRow = new QHBoxLayout;
         lossRow->setSpacing(4);
         for (int i = 0; i < 3; ++i) {
@@ -1162,7 +1456,7 @@ private:
                 configChanged();
             });
         }
-        lv->addLayout(lossRow);
+        s4->addLayout(lossRow);
         auto* optRow = new QHBoxLayout;
         optRow->setSpacing(4);
         for (int i = 0; i < 3; ++i) {
@@ -1179,7 +1473,7 @@ private:
                 configChanged();
             });
         }
-        lv->addLayout(optRow);
+        s4->addLayout(optRow);
 
         m_muRow = new QWidget;
         auto* muLay = new QHBoxLayout(m_muRow);
@@ -1198,7 +1492,7 @@ private:
         });
         muLay->addWidget(m_muSpin);
         muLay->addStretch(1);
-        lv->addWidget(m_muRow);
+        s4->addWidget(m_muRow);
 
         m_adamRow = new QWidget;
         auto* adLay = new QHBoxLayout(m_adamRow);
@@ -1237,15 +1531,18 @@ private:
         });
         adLay->addWidget(m_epsCombo);
         adLay->addStretch(1);
-        lv->addWidget(m_adamRow);
+        s4->addWidget(m_adamRow);
 
+        // Warnings live outside the collapsed box so they are never hidden.
         m_warnLbl = new QLabel;
         m_warnLbl->setWordWrap(true);
         m_warnLbl->setStyleSheet(QStringLiteral("color:#F5A623;"));
         lv->addWidget(m_warnLbl);
 
         // 5. run status (§42 summary lives here)
-        lv->addWidget(makeSection(QStringLiteral("5. RUN STATUS")));
+        auto* sec5 = new CollapsibleSection(QStringLiteral("5. RUN STATUS"), true, m_configBox);
+        lv->addWidget(sec5);
+        QVBoxLayout* s5 = sec5->content();
         auto* panel = new QFrame;
         panel->setObjectName(QStringLiteral("panel"));
         auto* pv = new QVBoxLayout(panel);
@@ -1261,7 +1558,7 @@ private:
             l->setWordWrap(true);
             pv->addWidget(l);
         }
-        lv->addWidget(panel);
+        s5->addWidget(panel);
 
         // (No dead stretch here: the scroll area above takes all extra space,
         // keeping SAVE/LOAD + START docked at the bottom.)
@@ -1389,6 +1686,114 @@ private:
     }
 
     // ---- config pipeline: preview -> validate -> READY/ERROR ----
+    // Popup editor for 1-8 hidden layers (keeps the left panel compact).
+    void openHiddenDialog() {
+        if (g_bridge.isTraining) return; // config locked during training
+        auto* dlg = new QDialog(this);
+        dlg->setWindowTitle(QStringLiteral("Hidden layers"));
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->setMinimumWidth(430);
+        auto* lay = new QVBoxLayout(dlg);
+        auto* hint = new QLabel(QString::asprintf("1-%d hidden layers, 1-64 neurons each.", kMaxHidden));
+        hint->setStyleSheet(QStringLiteral("color:#8A90A0;"));
+        lay->addWidget(hint);
+        auto* box = new QWidget;
+        auto* rows = new QVBoxLayout(box);
+        rows->setContentsMargins(0, 0, 0, 0);
+        rows->setSpacing(4);
+        lay->addWidget(box);
+
+        struct HDlgState {
+            std::vector<HiddenCfg> work;
+            std::vector<QWidget*> rows;
+            QVBoxLayout* layout = nullptr;
+            std::function<void()> rebuild;
+        };
+        auto st = std::make_shared<HDlgState>();
+        st->work = m_hidden;
+        st->layout = rows;
+        st->rebuild = [st]() {
+            for (QWidget* w : st->rows) {
+                st->layout->removeWidget(w);
+                w->deleteLater();
+            }
+            st->rows.clear();
+            for (std::size_t i = 0; i < st->work.size(); ++i) {
+                auto* row = new QWidget;
+                auto* rl = new QHBoxLayout(row);
+                rl->setContentsMargins(0, 0, 0, 0);
+                rl->setSpacing(4);
+                auto* nm = new QLabel(QString::asprintf("H%llu", (unsigned long long)i + 1));
+                nm->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+                nm->setFixedWidth(32);
+                rl->addWidget(nm);
+                auto* sz = new QSpinBox;
+                sz->setRange(1, 64);
+                sz->setValue(st->work[i].n);
+                sz->setFixedWidth(60);
+                connect(sz, &QSpinBox::valueChanged, [st, i](int v) { st->work[i].n = v; });
+                rl->addWidget(sz);
+                auto* ac = new QComboBox;
+                for (auto lbl : kActLabels) ac->addItem(QString::fromLatin1(lbl));
+                ac->setCurrentIndex((int)st->work[i].act);
+                connect(ac, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                        [st, i](int a) { st->work[i].act = ActiveActivation(std::max(0, std::min(4, a))); });
+                rl->addWidget(ac, 1);
+                auto* up = new QPushButton(QStringLiteral("^"));
+                up->setFixedWidth(30);
+                up->setToolTip(QStringLiteral("Move up"));
+                up->setEnabled(i > 0);
+                connect(up, &QPushButton::clicked, [st, i]() {
+                    std::swap(st->work[i], st->work[i - 1]);
+                    st->rebuild();
+                });
+                rl->addWidget(up);
+                auto* dn = new QPushButton(QStringLiteral("v"));
+                dn->setFixedWidth(30);
+                dn->setToolTip(QStringLiteral("Move down"));
+                dn->setEnabled(i + 1 < st->work.size());
+                connect(dn, &QPushButton::clicked, [st, i]() {
+                    std::swap(st->work[i], st->work[i + 1]);
+                    st->rebuild();
+                });
+                rl->addWidget(dn);
+                auto* del = new QPushButton(QStringLiteral("x"));
+                del->setFixedWidth(30);
+                del->setToolTip(QStringLiteral("Remove layer"));
+                del->setEnabled(st->work.size() > 1);
+                connect(del, &QPushButton::clicked, [st, i]() {
+                    st->work.erase(st->work.begin() + (std::ptrdiff_t)i);
+                    st->rebuild();
+                });
+                rl->addWidget(del);
+                st->layout->addWidget(row);
+                st->rows.push_back(row);
+            }
+        };
+        st->rebuild();
+        // Break the rebuild self-cycle when the dialog closes.
+        connect(dlg, &QDialog::finished, [st]() { st->rebuild = nullptr; });
+        auto* addBtn = new QPushButton(QStringLiteral("+ Add hidden layer"));
+        connect(addBtn, &QPushButton::clicked, [st]() {
+            if ((int)st->work.size() < kMaxHidden) {
+                st->work.push_back({8, ACT_RELU});
+                st->rebuild();
+            }
+        });
+        lay->addWidget(addBtn);
+        auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        connect(buttons, &QDialogButtonBox::accepted, this, [this, dlg, st]() {
+            if (!st->work.empty()) {
+                m_hidden = st->work;
+                configChanged();
+            }
+            dlg->accept();
+        });
+        connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+        lay->addWidget(buttons);
+        dlg->show();
+    }
+
     void configChanged() {
         if (g_bridge.isTraining) return; // config locked during training
         g_bridge.resetLive();
@@ -1396,7 +1801,44 @@ private:
         refreshConfigUi();
     }
 
-    void refreshConfigUi() {
+    // Skeleton preview of the CURRENT config (dims from data preview).
+    // Called on every config change so the Network tab can never show a
+    // stale trained net as if it were the current architecture.
+    void refreshNetPreview() {
+        if (g_bridge.isTraining) return;
+        std::string fp = archSummary() + "|" + m_previewFp;
+        if (fp == m_shownNetFp) return;
+        m_shownNetFp = fp;
+        if (!m_previewErr.empty()) {
+            m_netview->setArch(ArchDesc{});
+            return;
+        }
+        ArchDesc ad;
+        ad.valid = true;
+        auto shortAct = [](const std::string& n) -> QString {
+            if (n == "sigmoid") return QStringLiteral("Sig");
+            if (n == "tanh") return QStringLiteral("Tanh");
+            if (n == "relu") return QStringLiteral("ReLU");
+            if (n == "leaky_relu") return QStringLiteral("L-ReLU");
+            if (n == "swish") return QStringLiteral("Swish");
+            return QStringLiteral("Lin");
+        };
+        ad.sizes.push_back(m_preview.inDim);
+        ad.names.push_back(QStringLiteral("Input"));
+        ExperimentConfig cfg = currentConfig();
+        for (std::size_t i = 0; i < cfg.hidden.size(); ++i) {
+            ad.sizes.push_back(std::size_t(cfg.hidden[i]));
+            ad.names.push_back(QString::asprintf("H%llu·", (unsigned long long)i + 1) +
+                               shortAct(cfg.hiddenActs[i]));
+        }
+        ad.sizes.push_back(m_preview.outDim);
+        ad.names.push_back(QStringLiteral("Output·") + shortAct(cfg.outputAct));
+        m_netview->setArch(std::move(ad));
+    }
+
+    // Never throws into Qt: any unexpected failure becomes an error label
+    // (an exception escaping a slot would terminate the whole app).
+    void refreshConfigUi() try {
         checkOnly(m_dsBtns, (int)m_dataset);
         checkOnly(m_lossBtns, (int)m_loss);
         checkOnly(m_optBtns, (int)m_opt);
@@ -1407,18 +1849,14 @@ private:
         m_csvRow->setVisible(m_dataset == DS_CSV);
         m_csvPathLbl->setText(m_csvPath.empty() ? QStringLiteral("No file — drag and drop a .csv file onto the window.")
                                                 : QString::fromStdString(m_csvPath));
-        m_layersLbl->setText(QString::asprintf("LAYERS: %d", m_numHidden));
+        m_layersLbl->setText(QString::asprintf("LAYERS: %d (1-%d)", (int)m_hidden.size(), kMaxHidden));
         m_archLbl->setText(QString::fromStdString(archSummary()));
-        for (int i = 0; i < 4; ++i) {
-            m_layerRows[i].row->setVisible(i < m_numHidden);
-            m_layerRows[i].name->setText(QString::asprintf("H%d:%d", i + 1, m_hiddenN[i]));
-            if (m_layerRows[i].size->value() != m_hiddenN[i]) {
-                m_layerRows[i].size->blockSignals(true);
-                m_layerRows[i].size->setValue(m_hiddenN[i]);
-                m_layerRows[i].size->blockSignals(false);
-            }
-            for (int a = 0; a < 5; ++a)
-                m_layerRows[i].acts[(std::size_t)a]->setChecked(m_hiddenAct[i] == ActiveActivation(a));
+        {
+            QStringList parts;
+            for (std::size_t i = 0; i < m_hidden.size(); ++i)
+                parts.push_back(QString::asprintf("H%llu:%d %s", (unsigned long long)i + 1,
+                    m_hidden[i].n, kActLabels[(int)m_hidden[i].act]));
+            m_hiddenSumLbl->setText(parts.join(QStringLiteral("  ·  ")));
         }
         m_epochValLbl->setText(QString::number(m_epochsTarget));
         if (m_epochSlider->value() != m_epochsTarget &&
@@ -1440,6 +1878,7 @@ private:
             m_warnLbl->setText(QString());
             m_cfgLbl->setText(QStringLiteral("Fix the dataset configuration to continue."));
             m_trainBtn->setEnabled(false);
+            refreshNetPreview();
             refreshLiveUi();
             return;
         }
@@ -1486,7 +1925,18 @@ private:
                 + QString::asprintf(" (eff %llu) | seed %d%s | %s", (unsigned long long)eff, m_seed,
                                     m_shuffle ? "" : " noshuffle", normN));
         }
+        refreshNetPreview();
         refreshLiveUi();
+    } catch (const std::exception& e) {
+        qWarning("refreshConfigUi: %s", e.what());
+        m_state = ST_ERROR;
+        m_dsInfoLbl->setText(QStringLiteral("Internal error:\n") +
+                             QString::fromStdString(e.what()));
+        m_trainBtn->setEnabled(false);
+    } catch (...) {
+        qWarning("refreshConfigUi: unknown error");
+        m_state = ST_ERROR;
+        m_trainBtn->setEnabled(false);
     }
 
     void syncTabs() {
@@ -1815,29 +2265,23 @@ private:
             }
             m_boundary->setData(std::move(grid), std::move(trP), std::move(trC),
                                 std::move(teP), std::move(teC), x0, x1, y0, y1, true);
+            m_boundary->setPredictor(net);
         } else {
             m_boundary->setData(QImage(), {}, {}, {}, {}, 0, 1, 0, 1, false);
+            m_boundary->setPredictor(nullptr);
         }
-        // Network diagram.
-        ArchDesc ad;
+        // Network diagram: trained net with live firing (replaces any preview).
         if (net && net->numLayers() > 0) {
-            ad.valid = true;
-            ad.sizes.push_back(net->layers()[0].inputSize());
-            ad.names.push_back(QStringLiteral("Input"));
-            for (std::size_t l = 0; l < net->numLayers(); ++l) {
-                const auto& layer = net->layers()[l];
-                ad.sizes.push_back(layer.size());
-                QString an = layer.neurons().empty()
-                    ? QStringLiteral("?")
-                    : QString::fromStdString(layer.neurons()[0].activation().name());
-                bool last = (l + 1 == net->numLayers());
-                ad.names.push_back((last ? QStringLiteral("Output (") : QStringLiteral("Hidden ")) +
-                                   (last ? an + QStringLiteral(")")
-                                         : QString::number((unsigned long long)l + 1) +
-                                           QStringLiteral(" (") + an + QStringLiteral(")")));
-            }
+            Vector probe;
+            if (tr.size() > 0) probe = tr.input(0);
+            else if (te.size() > 0) probe = te.input(0);
+            QString tag = QStringLiteral("TRAINED — ") +
+                QString::fromStdString(describeNet(*net));
+            m_netview->setNet(net, probe, tag);
+            m_shownNetFp = archSummary() + "|" + m_previewFp;
+        } else {
+            m_netview->setArch(ArchDesc{});
         }
-        m_netview->setArch(std::move(ad));
     }
 
     // ---- results dialog (§13) + model save/load (§27) ----
@@ -1939,26 +2383,29 @@ private:
         try {
             std::mt19937 rng((unsigned)m_seed);
             NeuralNetwork net = ModelSerializer::load(path.toStdString(), rng);
-            if (net.numLayers() < 2 || net.numLayers() > 5) {
+            if (net.numLayers() < 2 || net.numLayers() > std::size_t(kMaxHidden + 1)) {
                 QMessageBox::warning(this, QStringLiteral("Load model"),
-                                     QStringLiteral("Model has %1 layers; the editor supports 1-4 hidden layers.")
-                                         .arg((unsigned long long)net.numLayers() - 1));
+                                     QString::asprintf("Model has %llu hidden layers; the editor supports 1-%d.",
+                                                       (unsigned long long)net.numLayers() - 1, kMaxHidden));
                 return;
             }
             std::size_t nh = net.numLayers() - 1;
-            m_numHidden = (int)nh;
+            std::vector<HiddenCfg> loaded;
             for (std::size_t l = 0; l < nh; ++l) {
-                m_hiddenN[l] = (int)net.layers()[l].size();
+                HiddenCfg h;
+                h.n = (int)net.layers()[l].size();
                 std::string an = net.layers()[l].neurons().empty()
                     ? "" : net.layers()[l].neurons()[0].activation().name();
                 try {
-                    m_hiddenAct[l] = actFromName(an);
+                    h.act = actFromName(an);
                 } catch (const std::exception&) {
                     QMessageBox::warning(this, QStringLiteral("Load model"),
                                          QString::fromStdString("Unsupported hidden activation '" + an + "'."));
                     return;
                 }
+                loaded.push_back(h);
             }
+            m_hidden = loaded;
             std::string oan = net.layers().back().neurons().empty()
                 ? "" : net.layers().back().neurons()[0].activation().name();
             bool known = false;
@@ -1979,21 +2426,18 @@ private:
                 g_bridge.lastInDim = net.layers()[0].inputSize();
                 g_bridge.lastOutDim = net.layers().back().size();
             }
-            ArchDesc ad;
-            ad.valid = true;
-            ad.sizes.push_back(net.layers()[0].inputSize());
-            ad.names.push_back(QStringLiteral("Input"));
-            for (std::size_t l = 0; l < net.numLayers(); ++l) {
-                ad.sizes.push_back(net.layers()[l].size());
-                QString an = QString::fromStdString(net.layers()[l].neurons()[0].activation().name());
-                bool last = (l + 1 == net.numLayers());
-                ad.names.push_back(last ? QStringLiteral("Output (") + an + QStringLiteral(")")
-                                        : QStringLiteral("Hidden ") + QString::number((unsigned long long)l + 1) +
-                                          QStringLiteral(" (") + an + QStringLiteral(")"));
-            }
-            m_netview->setArch(std::move(ad));
+            auto shown = std::make_shared<NeuralNetwork>(net);
+            QString tag = QStringLiteral("LOADED model — ") +
+                QString::fromStdString(describeNet(net));
+            m_netview->setNet(shown, Vector{},
+                              tag + QStringLiteral(" — train to replace"));
+            m_shownNetFp = archSummary() + "|" + m_previewFp + "|loaded";
             pushUiFromState();
             configChanged();
+            // configChanged() repaints a skeleton preview; restore the loaded
+            // net on top since its weights are worth inspecting as-is.
+            m_netview->setNet(shown, Vector{}, tag);
+            m_shownNetFp = archSummary() + "|" + m_previewFp + "|loaded";
             std::lock_guard<std::mutex> lock(g_bridge.mtx);
             g_bridge.summary = "Model loaded (" + describeNet(net) + ") — pick a matching dataset, then train or inspect Network.";
         } catch (const std::exception& e) {
@@ -2046,9 +2490,7 @@ private:
 
     void applyPresetXor(bool refresh) {
         m_dataset = DS_XOR;
-        m_numHidden = 1;
-        m_hiddenN[0] = 8;
-        m_hiddenAct[0] = ACT_TANH;
+        m_hidden = {{8, ACT_TANH}};
         m_outputAct = "sigmoid";
         m_loss = LOSS_MSE;
         m_opt = OPT_ADAM;
@@ -2063,9 +2505,7 @@ private:
     }
     void applyPresetIris() {
         m_dataset = DS_IRIS;
-        m_numHidden = 2;
-        m_hiddenN[0] = 8; m_hiddenN[1] = 8;
-        m_hiddenAct[0] = ACT_RELU; m_hiddenAct[1] = ACT_RELU;
+        m_hidden = {{8, ACT_RELU}, {8, ACT_RELU}};
         m_outputAct = "sigmoid";
         m_loss = LOSS_CCE;
         m_opt = OPT_ADAM;
@@ -2080,9 +2520,7 @@ private:
     }
     void applyPresetBinary() {
         m_dataset = DS_AND;
-        m_numHidden = 1;
-        m_hiddenN[0] = 4;
-        m_hiddenAct[0] = ACT_TANH;
+        m_hidden = {{4, ACT_TANH}};
         m_outputAct = "sigmoid";
         m_loss = LOSS_BCE;
         m_opt = OPT_SGD;
