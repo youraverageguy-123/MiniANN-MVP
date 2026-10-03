@@ -3,10 +3,50 @@
 #include "miniann/activation.hpp"
 #include <random>
 #include <cstddef>
+#include <memory>
+#include <string>
 
 namespace miniann {
 
 enum class WeightInit { Uniform, Xavier, He };
+
+// Strategy: weight-initialization schemes as polymorphic objects, so Neuron
+// never switches on an enum to decide math. New schemes subclass + register
+// in the factory; no existing code changes.
+class IWeightInit {
+public:
+    virtual ~IWeightInit() = default;
+    virtual void initialize(Vector& weights, double& bias, std::size_t numInputs,
+                            std::size_t numOutputs, std::mt19937& rng) const = 0;
+    virtual std::string name() const = 0;
+};
+
+class UniformInit : public IWeightInit {
+public:
+    void initialize(Vector& weights, double& bias, std::size_t numInputs,
+                    std::size_t numOutputs, std::mt19937& rng) const override;
+    std::string name() const override { return "uniform"; }
+};
+
+class XavierInit : public IWeightInit {
+public:
+    void initialize(Vector& weights, double& bias, std::size_t numInputs,
+                    std::size_t numOutputs, std::mt19937& rng) const override;
+    std::string name() const override { return "xavier"; }
+};
+
+class HeInit : public IWeightInit {
+public:
+    void initialize(Vector& weights, double& bias, std::size_t numInputs,
+                    std::size_t numOutputs, std::mt19937& rng) const override;
+    std::string name() const override { return "he"; }
+};
+
+class WeightInitFactory {
+public:
+    static std::unique_ptr<IWeightInit> create(WeightInit method);
+    static std::unique_ptr<IWeightInit> create(const std::string& name);
+};
 
 class Neuron {
 public:

@@ -21,6 +21,9 @@ add_library(miniann
   src/serializer.cpp
   src/visualizer.cpp
   src/experiment.cpp
+  src/normalize.cpp
+  src/validate.cpp
+  src/datasource.cpp
 )
 
 add_executable(xor_demo demos/xor_demo.cpp)
@@ -49,6 +52,9 @@ target_link_libraries(test_choices miniann)
 
 add_executable(test_training tests/test_training.cpp)
 target_link_libraries(test_training miniann)
+
+add_executable(test_patterns tests/test_patterns.cpp)
+target_link_libraries(test_patterns miniann)
 
 # Optional native GUI: only built when Qt6 Widgets are available, so plain
 # `cmake -B build && cmake --build build` keeps working without them.

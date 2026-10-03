@@ -32,7 +32,8 @@ struct ExperimentConfig {
     int normMode = 1;            // 0 none, 1 max-abs, 2 min-max
     double trainFrac = 0.8, valFrac = 0.1;
     unsigned seed = 42;
-    bool shuffle = true;
+    bool shuffle = true;      // reshuffle the train set each epoch
+    bool splitShuffle = true; // shuffle before the train/val/test split
     // -- network --
     std::vector<int> hidden = {8, 8};
     std::vector<std::string> hiddenActs = {"tanh", "relu"};
@@ -50,12 +51,19 @@ struct ExperimentConfig {
 struct PreparedData {
     Dataset train, val, test;
     bool hasVal = false;
-    bool tiny = false;           // <=8 samples: train==test==full, no validation
+    bool hasTest = false;      // false only for tiny truth tables (no held-out data exists)
+    bool tiny = false;           // <=8 samples: train on the full table, no val/test splits
+    std::string splitNote;       // human-readable split description / adjustments
     std::string name;
     std::size_t samples = 0, features = 0, inDim = 0, outDim = 0;
     std::size_t classes = 0;     // >0 only when targets are discrete classes
     bool discreteClasses = false;
     std::size_t nTrain = 0, nVal = 0, nTest = 0;
+    // Target-column provenance ( SelLabel auto-detection or explicit choice).
+    int targetColUsed = 0;
+    std::size_t targetDistinct = 0;
+    double targetMin = 0.0, targetMax = 0.0;
+    std::string targetNote;      // e.g. "auto: header name 'label'"
 };
 
 struct ExperimentResult {
@@ -65,10 +73,11 @@ struct ExperimentResult {
     double trainLoss = 0.0, trainAcc = 0.0;
     double valLoss = 0.0, valAcc = 0.0;
     double testLoss = 0.0, testAcc = 0.0;
-    bool hasVal = false, evaluated = false;
+    bool hasVal = false, hasTest = false, evaluated = false;
     std::vector<std::vector<std::size_t>> confusion;
     std::size_t numClasses = 0;
     bool hasConfusion = false;
+    bool confusionOnTrain = false; // true when no test set exists (tiny tables)
     double seconds = 0.0;
     bool stopped = false;
     std::string error, warning;
