@@ -40,16 +40,19 @@ echo [8/9] Building test_choices.exe...
 g++ %FLAGS% %INCL% %SRC% tests\test_choices.cpp -o test_choices.exe
 if errorlevel 1 exit /b 1
 
-echo [9/9] Building gui_app.exe (Raylib)...
+echo [9/9] Building gui_app.exe (Raylib, optional)...
 g++ %FLAGS% %INCL% %SRC% demos\gui_app.cpp %RAYLIB_LIBS% -o gui_app.exe
 if errorlevel 1 (
-    echo [ERROR] Raylib GUI build failed!
-    exit /b 1
+    echo [WARN] Raylib GUI skipped: raylib not found.
+    echo        Core demos above built fine. To enable the GUI:
+    echo          1. Open "MSYS2 MINGW64" ^(not MSYS^) from the Start menu
+    echo          2. pacman -Syu ^&^& pacman -S mingw-w64-x86_64-raylib
+    echo          3. Re-run .\build.bat from this folder
+) else (
+    echo [OK] gui_app.exe built. Launch it with: .\gui_app.exe
 )
 
 echo.
 echo ====================================
-echo  All targets built successfully!
+echo  Core targets built successfully!
 echo ====================================
-echo Launching GUI app...
-.\gui_app.exe

@@ -278,42 +278,130 @@ std::string svgChart(const std::vector<std::pair<std::string, std::vector<double
     return os.str();
 }
 
-std::string svgBoundary(NeuralNetwork& net, const Dataset& data) {
-    const int GW = 41, GH = 21, C = 12;
-    std::ostringstream os;
-    os << "<h2>Decision boundary</h2>\n<svg width=\"" << (GW * C + 60) << "\" height=\""
-       << (GH * C + 20) << "\" style=\"background:#fff;border:1px solid #ccc\">\n";
-    for (int r = 0; r < GH; ++r) {
-        double x2 = 1.1 - 1.2 * double(r) / double(GH - 1);
-        for (int c = 0; c < GW; ++c) {
-            double x1 = -0.1 + 1.2 * double(c) / double(GW - 1);
-            Vector p = net.predict({x1, x2});
-            os << "<rect x=\"" << (c * C) << "\" y=\"" << (r * C) << "\" width=\"" << C
-               << "\" height=\"" << C << "\" fill=\"" << (p[0] >= 0.5 ? "#bdd7e7" : "#f2f2f2")
-               << "\"/>\n";
-        }
-    }
-    for (std::size_t i = 0; i < data.size(); ++i) {
-        if (data.input(i).size() != 2 || data.target(i).size() != 1) continue;
-        double cx = (data.input(i)[0] + 0.1) / 1.2 * double(GW * C);
-        double cy = (1.1 - data.input(i)[1]) / 1.2 * double(GH * C);
-        bool one = data.target(i)[0] >= 0.5;
-        os << "<circle cx=\"" << f2(cx) << "\" cy=\"" << f2(cy) << "\" r=\"6\" fill=\""
-           << (one ? "#08519c" : "#ffffff") << "\" stroke=\"#000\"/>\n"
-           << "<text x=\"" << f2(cx) << "\" y=\"" << f2(cy + 4)
-           << "\" text-anchor=\"middle\" font-size=\"9\" fill=\"" << (one ? "#fff" : "#000")
-           << "\">" << (one ? "1" : "0") << "</text>\n";
-    }
-    os << "</svg>\n<p># = predicts 1, light = predicts 0, numbered dots = training points.</p>\n";
-    return os.str();
-}
 } // namespace
 
 void HtmlReport::addPre(const std::string& heading, const std::string& text) {
     pres_.emplace_back(heading, text);
 }
 
-void HtmlReport::save(const std::string& path) const {
+std::string JsModelExporter::exportModelJson(const NeuralNetwork& net) {
+    std::ostringstream os;
+    os << std::setprecision(17);
+    os << "{\"layers\":[";
+    bool firstL = true;
+    for (auto& layer : net.layers()) {
+        if (!firstL) os << ",";
+        firstL = false;
+        std::string act = layer.neurons().empty() ? "sigmoid"
+                                                  : layer.neurons()[0].activation().name();
+        os << "{\"act\":\"" << act << "\",\"neurons\":[";
+        bool firstN = true;
+        for (auto& n : layer.neurons()) {
+            if (!firstN) os << ",";
+            firstN = false;
+            os << "{\"w\":[";
+            const Vector& w = n.weights();
+            for (std::size_t i = 0; i < w.size(); ++i) os << (i ? "," : "") << w[i];
+            os << "],\"b\":" << n.bias() << "}";
+        }
+        os << "]}";
+    }
+    os << "]}";
+    return os.str();
+}
+
+std::string JsModelExporter::exportPointsJson(const Dataset& data) {
+    std::ostringstream os;
+    os << std::setprecision(17) << "[";
+    for (std::size_t i = 0; i < data.size(); ++i) {
+        if (i) os << ",";
+        os << "{\"x\":[";
+        const Vector& x = data.input(i);
+        for (std::size_t k = 0; k < x.size(); ++k) os << (k ? "," : "") << x[k];
+        os << "],\"t\":[";
+        const Vector& t = data.target(i);
+        for (std::size_t k = 0; k < t.size(); ++k) os << (k ? "," : "") << t[k];
+        os << "]}";
+    }
+    os << "]";
+    return os.str();
+}
+
+std::string HtmlReport::buildProbeSection() const {
+    if (!bnet_ || bnet_->layers().empty()) return "<p>(no model embedded)</p>\n";
+    std::size_t inDim = bnet_->layers()[0].neurons()[0].weights().size();
+    std::size_t outDim = bnet_->layers().back().neurons().size();
+    bool is2d = (inDim == 2 && outDim == 1);
+    if (bdata_ && bdata_->size() > 0) {
+        is2d = (bdata_->input(0).size() == 2 && bdata_->target(0).size() == 1);
+    }
+    std::string modelJson = JsModelExporter::exportModelJson(*bnet_);
+    std::string pointsJson = (bdata_ && bdata_->size() > 0)
+                                 ? JsModelExporter::exportPointsJson(*bdata_)
+                                 : "[]";
+
+    std::ostringstream os;
+    os << "<div class=\"card\"><h2>Try your own input (live, no re-run)</h2>\n";
+    os << "<p class=\"muted\">Move the sliders or type numbers — prediction, neuron firing "
+          "and the probe dot update instantly in your browser. Same math as the C++ "
+          "<code>predict()</code>.</p>\n";
+    os << "<div id=\"inputs\"></div>\n";
+    if (is2d) {
+        os << "<label>decision threshold <span id=\"thVal\">0.50</span>\n"
+           << "<input id=\"th\" type=\"range\" min=\"0.05\" max=\"0.95\" step=\"0.01\" value=\"0.5\"></label>\n";
+        os << "<canvas id=\"bmap\" width=\"492\" height=\"252\"></canvas>\n"
+           << "<p class=\"muted\">blue = predicts 1, light = predicts 0, numbered dots = training "
+              "points, red ring = your probe. Drag the threshold to recolor the map live.</p>\n";
+    }
+    os << "<div id=\"pred\" class=\"pred\">–</div>\n";
+    os << "<h3>Neuron firing (mirrors CLI live panel)</h3><div id=\"fire\"></div>\n";
+    os << "<script>\nconst MODEL=" << modelJson << ";\nconst POINTS=" << pointsJson << ";\n";
+    os << R"JS(
+const IN_DIM=MODEL.layers[0].neurons[0].w.length;
+const OUT_DIM=MODEL.layers[MODEL.layers.length-1].neurons.length;
+function act(n,z){if(n==="sigmoid")return 1/(1+Math.exp(-z));if(n==="tanh")return Math.tanh(z);
+if(n==="relu")return z>0?z:0;if(n==="leaky_relu"||n==="leakyrelu")return z>0?z:0.01*z;
+if(n==="swish")return z/(1+Math.exp(-z));return 1/(1+Math.exp(-z));}
+function forward(x){let a=x.slice(),trace=[];for(const L of MODEL.layers){let n=[];for(const u of L.neurons){
+let z=u.b;for(let i=0;i<a.length;i++)z+=u.w[i]*a[i];let o=act(L.act,z);n.push(o);}trace.push(n);a=n;}return{out:a,trace};}
+function clsOf(o){if(o.length===1)return o[0]>=state.th?1:0;let b=0;for(let k=1;k<o.length;k++)if(o[k]>o[b])b=k;return b;}
+function confOf(o,c){if(o.length===1)return c?o[0]:1-o[0];return o[c];}
+const state={x:Array(IN_DIM).fill(0.5),th:0.5};
+function buildInputs(){const d=document.getElementById('inputs');d.innerHTML='';
+for(let i=0;i<IN_DIM;i++){const w=document.createElement('div');w.className='row';
+w.innerHTML='<label>x'+(i+1)+'</label><input id="s'+i+'" type="range" min="-0.5" max="1.5" step="0.01" value="'+state.x[i]+'">'
++'<input id="n'+i+'" type="number" min="-0.5" max="1.5" step="0.01" value="'+state.x[i]+'">';
+d.appendChild(w);}
+for(let i=0;i<IN_DIM;i++){const s=document.getElementById('s'+i),n=document.getElementById('n'+i);
+s.oninput=()=>{state.x[i]=parseFloat(s.value);n.value=s.value;update();};
+n.oninput=()=>{let v=Math.max(-0.5,Math.min(1.5,parseFloat(n.value)||0));state.x[i]=v;s.value=v;update();};}}
+function fireHtml(tr){let h='';for(let l=0;l<tr.length;l++){h+='<div class="lyr">L'+l+' ';
+for(let j=0;j<tr[l].length;j++){const v=tr[l][j];const pct=Math.max(0,Math.min(100,Math.round(v*100)));
+h+='<span class="nb" title="L'+l+'N'+j+'='+v.toFixed(3)+'"><i style="width:'+pct+'%"></i><b>L'+l+'N'+j+' '+v.toFixed(2)+'</b></span>';}h+='</div>';}return h;}
+const cv=document.getElementById('bmap');
+function drawMap(){if(!cv||IN_DIM!==2||OUT_DIM!==1)return;const GW=41,GH=21,W=cv.width,H=cv.height;
+const ctx=cv.getContext('2d'),cw=W/GW,ch=H/GH;
+for(let r=0;r<GH;r++){for(let c=0;c<GW;c++){const x1=-0.1+1.2*c/(GW-1),x2=1.1-1.2*r/(GH-1);
+const p=forward([x1,x2]).out[0];ctx.fillStyle=p>=state.th?'#7fb3d5':'#f0f0f0';ctx.fillRect(c*cw,r*ch,cw+1,ch+1);}}
+for(const p of POINTS){if(p.x.length!==2)continue;const cx=(p.x[0]+0.1)/1.2*W,cy=(1.1-p.x[1])/1.2*H;
+ctx.beginPath();ctx.arc(cx,cy,8,0,7);ctx.fillStyle=p.t[0]>=0.5?'#08519c':'#fff';ctx.fill();ctx.strokeStyle='#000';ctx.stroke();
+ctx.fillStyle=p.t[0]>=0.5?'#fff':'#000';ctx.font='9px sans-serif';ctx.textAlign='center';
+ctx.fillText(p.t[0]>=0.5?'1':'0',cx,cy+3);}
+const px=(state.x[0]+0.1)/1.2*W,py=(1.1-state.x[1])/1.2*H;
+ctx.beginPath();ctx.arc(px,py,9,0,7);ctx.strokeStyle='#e74c3c';ctx.lineWidth=3;ctx.stroke();}
+function update(){const r=forward(state.x),c=clsOf(r.out),cf=confOf(r.out,c);
+document.getElementById('pred').textContent='class '+c+'  confidence '+(cf*100).toFixed(1)+'%   raw ['+r.out.map(v=>v.toFixed(4)).join(', ')+']';
+document.getElementById('fire').innerHTML=fireHtml(r.trace);drawMap();}
+buildInputs();
+const th=document.getElementById('th');
+if(th)th.oninput=()=>{state.th=parseFloat(th.value);document.getElementById('thVal').textContent=state.th.toFixed(2);update();};
+update();
+)JS";
+    os << "</script></div>\n";
+    return os.str();
+}
+
+std::string HtmlReport::render() {
     std::vector<std::pair<std::string, std::vector<double>>> losses, accs;
     std::vector<std::string> colors;
     for (std::size_t i = 0; i < series_.size(); ++i) {
@@ -322,22 +410,39 @@ void HtmlReport::save(const std::string& path) const {
         if (!series_[i].acc.empty()) accs.emplace_back(series_[i].name, series_[i].acc);
     }
     std::ostringstream os;
-    os << "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>" << htmlEscape(title_)
-       << "</title>\n<style>body{font-family:sans-serif;max-width:760px;margin:24px auto;color:#222}"
-          "pre{background:#f5f5f5;padding:12px;overflow-x:auto}h1{font-size:22px}</style></head><body>\n";
+    os << "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" "
+          "content=\"width=device-width,initial-scale=1\"><title>" << htmlEscape(title_)
+       << "</title>\n<style>body{font-family:system-ui,sans-serif;max-width:760px;margin:24px auto;"
+          "padding:0 12px;color:#222}h1{font-size:22px}h2{font-size:17px;margin:18px 0 8px}"
+          ".card{border:1px solid #ddd;border-radius:10px;padding:14px;margin:16px 0;background:#fcfcfc}"
+          "pre{background:#f5f5f5;padding:12px;overflow-x:auto;border-radius:8px;font-size:12px}"
+          ".muted{color:#666;font-size:13px}code{background:#eee;padding:0 4px;border-radius:4px}"
+          ".row{display:flex;gap:8px;align-items:center;margin:6px 0}.row label{width:28px}"
+          ".row input[type=range]{flex:1}.row input[type=number]{width:70px}"
+          ".pred{font-size:18px;font-weight:700;margin:10px 0}canvas{width:100%;border:1px solid #ccc;border-radius:6px}"
+          ".nb{display:inline-block;min-width:118px;background:#eee;border-radius:6px;margin:2px 4px 2px 0;"
+          "position:relative;overflow:hidden;font-size:11px}.nb i{display:block;height:14px;background:#1f77b4}"
+          ".nb b{position:absolute;left:4px;top:0;font-weight:600}.lyr{margin:4px 0}</style></head><body>\n";
     os << "<h1>" << htmlEscape(title_) << "</h1>\n";
+    os << "<p class=\"muted\">Minimal report — every CLI visual in one page: loss + accuracy curves, "
+          "decision map, network graph, weights, live neuron panel.</p>\n";
     os << svgChart(losses, colors, true, "Training loss", "loss");
     if (!accs.empty()) os << svgChart(accs, colors, false, "Accuracy", "accuracy");
-    if (bnet_ && bdata_ && bdata_->size() > 0 && bdata_->input(0).size() == 2 &&
-        bdata_->target(0).size() == 1)
-        os << svgBoundary(*bnet_, *bdata_);
+    os << buildProbeSection();
     for (auto& pr : pres_)
-        os << "<h2>" << htmlEscape(pr.first) << "</h2>\n<pre>" << htmlEscape(pr.second) << "</pre>\n";
+        os << "<div class=\"card\"><h2>" << htmlEscape(pr.first) << "</h2>\n<pre>"
+           << htmlEscape(pr.second) << "</pre></div>\n";
+    for (auto& s : sections_)
+        if (s) os << s->toHtml();
     os << "</body></html>\n";
+    return os.str();
+}
 
+void HtmlReport::save(const std::string& path) {
+    std::string html = render();
     std::ofstream f(path);
     if (!f) throw std::runtime_error("HtmlReport::save: cannot open " + path);
-    f << os.str();
+    f << html;
 }
 
 LiveConsole::LiveConsole(NeuralNetwork& net, Vector probe, std::string title,

@@ -101,22 +101,49 @@ struct ReportSeries {
     std::vector<double> acc;
 };
 
+// One HTML card inside the report. OOP seam: report composes sections
+// polymorphically (Composition + Open/Closed — add a section without
+// touching HtmlReport::render).
+class IHtmlSection {
+public:
+    virtual ~IHtmlSection() = default;
+    virtual std::string toHtml() const = 0;
+};
+
+// Serializes a trained net to JSON for the in-browser forward pass.
+// Single Responsibility: only reads public getters, never mutates the net.
+class JsModelExporter {
+public:
+    static std::string exportModelJson(const NeuralNetwork& net);
+    static std::string exportPointsJson(const Dataset& data);
+};
+
 // Self-contained HTML report: SVG loss chart (log-y) + SVG accuracy chart +
-// SVG decision heatmap (2-D nets) + <pre> blocks. Open in any browser.
-// Still dependency-free: the C++ side only writes text.
-class HtmlReport {
+// interactive probe (sliders -> live predict + neuron firing, mirrors the
+// CLI LiveConsole panel + playground REPL) + canvas decision heatmap with
+// live threshold slider (2-D nets) + <pre> blocks. Open in any browser.
+// Still dependency-free: the C++ side only writes text + vanilla JS.
+// Itself an IVisualizer so demos can hold it in the same polymorphic vector.
+class HtmlReport : public IVisualizer {
 public:
     explicit HtmlReport(std::string title) : title_(std::move(title)) {}
     void addSeries(const ReportSeries& s) { series_.push_back(s); }
     void setBoundary(NeuralNetwork* net, const Dataset* data) { bnet_ = net; bdata_ = data; }
     void addPre(const std::string& heading, const std::string& text);
-    void save(const std::string& path) const; // throws runtime_error
+    // Polymorphic card: any IHtmlSection subclass can be plugged in
+    // without editing HtmlReport::render (Open/Closed).
+    void addSection(std::unique_ptr<IHtmlSection> s) { sections_.push_back(std::move(s)); }
+    void save(const std::string& path); // throws runtime_error (non-const: renders then writes)
+    std::string render() override; // full HTML document
+    std::string title() const override { return title_; }
 private:
+    std::string buildProbeSection() const; // sliders + firing bars + canvas
     std::string title_;
     std::vector<ReportSeries> series_;
     NeuralNetwork* bnet_ = nullptr;
     const Dataset* bdata_ = nullptr;
     std::vector<std::pair<std::string, std::string>> pres_;
+    std::vector<std::unique_ptr<IHtmlSection>> sections_;
 };
 
 } // namespace miniann

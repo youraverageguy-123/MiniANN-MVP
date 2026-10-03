@@ -90,7 +90,7 @@ Dataset Dataset::loadCSV(const std::string& path, bool hasHeader,
     std::ifstream f(path);
     if (!f) throw std::runtime_error("Dataset::loadCSV: cannot open " + path);
     if (targetDim <= 0) throw std::invalid_argument("Dataset::loadCSV: targetDim must be > 0");
-    if (targetColIndex < 0) throw std::invalid_argument("Dataset::loadCSV: targetColIndex must be >= 0");
+    if (targetColIndex < -1) throw std::invalid_argument("Dataset::loadCSV: targetColIndex must be >= -1");
     Dataset ds;
     std::string line;
     bool first = true;
@@ -104,7 +104,10 @@ Dataset Dataset::loadCSV(const std::string& path, bool hasHeader,
         if (nCols == 0) nCols = cells.size();
         if (cells.size() != nCols)
             throw std::runtime_error("Dataset::loadCSV: ragged row (inconsistent column count)");
-        if (targetColIndex + targetDim > int(cells.size()))
+        // If targetColIndex == -1, treat it as "last column(s)".
+        int tc = targetColIndex;
+        if (tc == -1) tc = int(nCols) - targetDim;
+        if (tc < 0 || tc + targetDim > int(cells.size()))
             throw std::runtime_error("Dataset::loadCSV: target range out of bounds");
         std::vector<double> row;
         row.reserve(cells.size());
@@ -112,10 +115,10 @@ Dataset Dataset::loadCSV(const std::string& path, bool hasHeader,
             try { row.push_back(std::stod(c)); }
             catch (...) { throw std::runtime_error("Dataset::loadCSV: non-numeric value '" + c + "'"); }
         }
-        Vector tgt(row.begin() + targetColIndex, row.begin() + targetColIndex + targetDim);
+        Vector tgt(row.begin() + tc, row.begin() + tc + targetDim);
         Vector inp;
         for (int i = 0; i < int(row.size()); ++i)
-            if (i < targetColIndex || i >= targetColIndex + targetDim) inp.push_back(row[i]);
+            if (i < tc || i >= tc + targetDim) inp.push_back(row[i]);
         ds.add(std::move(inp), std::move(tgt));
     }
     if (ds.size() == 0) throw std::runtime_error("Dataset::loadCSV: no data rows");

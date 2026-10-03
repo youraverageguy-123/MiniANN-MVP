@@ -20,11 +20,25 @@ _deps/
 
 # Generated model + training outputs (recreated by running demos/tests)
 *.model
+*.miniann
+sandbox_model*
 /*_loss.csv
 /*loss.csv
 training_loss.csv
 circles_*.csv
 /*_report.html
+
+# Private local-only notes (never commit: personal runbook/summary)
+MY_NOTES.md
+MY_NOTES*.md
+PRIVATE*.md
+private*.md
+
+# Local-only discussion / viva notes (not part of build, do not commit)
+docs/CLI_HTML_REPORT_SUMMARY.md
+CLI_HTML_REPORT_SUMMARY.md
+docs/*SUMMARY*.md
+docs/*NOTES*.md
 
 # Keep dataset inputs under data/
 !data/*.csv

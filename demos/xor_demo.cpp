@@ -17,6 +17,7 @@
 #include "miniann/serializer.hpp"
 #include "miniann/cli.hpp"
 #include "miniann/visualizer.hpp"
+#include "miniann/report.hpp"
 
 using namespace miniann;
 
@@ -72,8 +73,9 @@ int main(int argc, char** argv) {
                   << " (target " << data.target(i)[0] << ")\n";
     }
     Accuracy acc;
+    const double finalLossEarly = hist.trainLoss.empty() ? 0.0 : hist.trainLoss.back();
     std::cout << "accuracy=" << acc.evaluate(preds, targets) * 100.0 << "% "
-              << "final_loss=" << hist.trainLoss.back() << "\n";
+              << "final_loss=" << finalLossEarly << "\n";
 
     // Visuals: every visual is an IVisualizer, printed polymorphically.
     std::vector<std::unique_ptr<IVisualizer>> visuals;
@@ -84,7 +86,8 @@ int main(int argc, char** argv) {
     }
 
     ModelSerializer::save(net, "xor.model");
-    NeuralNetwork net2 = ModelSerializer::load("xor.model", rng);    double maxDiff = 0.0;
+    NeuralNetwork net2 = ModelSerializer::load("xor.model", rng);
+    double maxDiff = 0.0;
     for (std::size_t i = 0; i < data.size(); ++i) {
         Vector a = net.predict(data.input(i));
         Vector b = net2.predict(data.input(i));
@@ -92,17 +95,26 @@ int main(int argc, char** argv) {
     }
     std::cout << "serialization round-trip max|y_orig - y_loaded|=" << maxDiff << "\n";
 
-    HtmlReport report("XOR 2-" + std::to_string(o.hidden) + "-1 " + o.hiddenAct +
-                      "/sigmoid, " + o.optimizer);
-    ReportSeries rs;
-    rs.name = o.optimizer + " lr=" + std::to_string(o.lr);
-    rs.loss = hist.trainLoss;
-    rs.acc = hist.trainAcc;
-    report.addSeries(rs);
-    report.setBoundary(&net, &data);
+    double finalLoss = finalLossEarly;
+    double accVal = acc.evaluate(preds, targets); // fraction 0..1 (SummarySection renders %)
     NetworkGraph ng(net);
-    report.addPre("network structure", ng.render());
-    report.save("xor_report.html");
-    std::cout << "HTML report -> xor_report.html (open in a browser)\n";
+    WeightsTable wt(net);
+    auto report = miniann::HtmlReportBuilder(
+                      "XOR 2-" + std::to_string(o.hidden) + "-1 " + o.hiddenAct +
+                      "/sigmoid, " + o.optimizer)
+                      .withSeries(o.optimizer + " lr=" + std::to_string(o.lr), hist)
+                      .withBoundary(net, data)
+                      .withConfig(o, argc, argv, "xor_report.html")
+                      .withSummary(finalLoss, accVal, o.epochs, o.optimizer, o.lr)
+                      .withPre("network structure", ng.render())
+                      .withPre("learned weights", wt.render())
+                      .build();
+    std::string reportPath = miniann::cli::resolveReportPath(o, "xor_report.html");
+    if (!reportPath.empty()) {
+        report.save(reportPath);
+        std::cout << "HTML report -> " << reportPath << " (open in a browser)\n";
+    } else {
+        std::cout << "HTML report skipped (--no-report)\n";
+    }
     return 0;
 }

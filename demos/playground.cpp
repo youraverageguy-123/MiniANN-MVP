@@ -18,14 +18,45 @@
 #include "miniann/serializer.hpp"
 #include "miniann/cli.hpp"
 #include "miniann/visualizer.hpp"
+#include "miniann/report.hpp"
 
 using namespace miniann;
+
+static std::string trimStr(std::string s) {
+    const char* ws = " \t\r\n";
+    s.erase(0, s.find_first_not_of(ws));
+    if (!s.empty()) s.erase(s.find_last_not_of(ws) + 1);
+    return s;
+}
 
 static std::string line(const std::string& prompt, const std::string& dflt) {
     std::cout << prompt << " [" << dflt << "]: ";
     std::string s;
     std::getline(std::cin, s);
+    s = trimStr(std::move(s));
     return s.empty() ? dflt : s;
+}
+
+static int parseInt(const std::string& raw, const char* what) {
+    try {
+        std::size_t pos = 0;
+        int v = std::stoi(raw, &pos);
+        if (pos != trimStr(raw).size()) throw std::invalid_argument("trailing text");
+        return v;
+    } catch (...) {
+        throw std::invalid_argument(std::string(what) + " must be an integer (got '" + raw + "')");
+    }
+}
+
+static double parseDouble(const std::string& raw, const char* what) {
+    try {
+        std::size_t pos = 0;
+        double v = std::stod(raw, &pos);
+        if (pos != trimStr(raw).size()) throw std::invalid_argument("trailing text");
+        return v;
+    } catch (...) {
+        throw std::invalid_argument(std::string(what) + " must be a number (got '" + raw + "')");
+    }
 }
 
 static Dataset oneHot(const Dataset& raw, int k) {
@@ -76,11 +107,14 @@ int main() {
         } else {
             std::string path = line("csv path", "data/iris_small.csv");
             std::string hs = line("has header? y/n", "y");
-            int tcol = std::stoi(line("target column index", "4"));
-            int tdim = std::stoi(line("target dim", "1"));
-            raw = Dataset::loadCSV(path, hs == "y", tcol, tdim);
+            int tcol = parseInt(line("target column index (-1 = last col)", "4"),
+                                "target column index (-1 = last column)");
+            int tdim = parseInt(line("target dim", "1"), "target dim");
+            if (tdim < 1) throw std::invalid_argument("target dim must be >= 1");
+            raw = Dataset::loadCSV(path, hs == "y" || hs == "Y", tcol, tdim);
             if (tdim == 1 && line("int class labels needing one-hot? y/n", "n") == "y") {
-                numClasses = std::stoi(line("num classes", "3"));
+                numClasses = parseInt(line("num classes", "3"), "num classes");
+                if (numClasses < 2) throw std::invalid_argument("num classes must be >= 2");
                 raw = normalizeMaxAbs(raw);
                 raw = oneHot(raw, numClasses);
             } else if (raw.target(0).size() > 1) {
@@ -90,7 +124,20 @@ int main() {
         std::cout << "loaded: " << raw.size() << " samples, in=" << raw.input(0).size()
                   << " out=" << raw.target(0).size() << "\n";
 
-        double split = std::stod(line("train fraction 0..1", "0.8"));
+        double split = parseDouble(line("train fraction 0..1", "0.8"), "train fraction");
+        if (!(split > 0.0 && split < 1.0))
+            throw std::invalid_argument("train fraction must be in (0,1), e.g. 0.8");
+        {
+            std::size_t nTrain = std::size_t(double(raw.size()) * split);
+            std::size_t nTest = raw.size() - nTrain;
+            if (nTrain < 2 || nTest < 1)
+                throw std::invalid_argument(
+                    "train fraction " + std::to_string(split) + " leaves " +
+                    std::to_string(nTrain) + " train / " +
+                    std::to_string(nTest) + " test samples; " +
+                    "need >=2 train and >=1 test (with only " + std::to_string(raw.size()) +
+                    " samples try 0.5 or 0.75)");
+        }
         std::mt19937 srng(42);
         auto [trFull, teFull] = raw.split(split, srng);
 
@@ -99,9 +146,16 @@ int main() {
         std::vector<int> sizes;
         { std::istringstream ss(line("sizes", raw.input(0).size() == 2 ? "2 8 8 1" : "4 6 3")); int v;
           while (ss >> v) sizes.push_back(v); }
-        if (sizes.size() < 2) throw std::invalid_argument("need >= 2 sizes");
+        if (sizes.size() < 2) throw std::invalid_argument("need >= 2 sizes, e.g. \"2 8 8 1\"");
+        for (int v : sizes)
+            if (v < 1) throw std::invalid_argument("all sizes must be >= 1");
         if (sizes.front() != int(raw.input(0).size()) || sizes.back() != int(raw.target(0).size()))
-            throw std::invalid_argument("sizes must start with input dim and end with output dim");
+            throw std::invalid_argument(
+                "sizes must start with input dim " + std::to_string(raw.input(0).size()) +
+                " and end with output dim " + std::to_string(raw.target(0).size()) +
+                " (dataset has in=" + std::to_string(raw.input(0).size()) +
+                " out=" + std::to_string(raw.target(0).size()) +
+                "); dims come from the dataset, hidden layers in the middle are yours, e.g. \"2 8 8 1\"");
         std::cout << "one activation per layer (" << sizes.size() - 1 << "): "
                      "sigmoid|tanh|relu|leaky_relu|swish\n";
         std::vector<std::string> acts;
@@ -114,13 +168,34 @@ int main() {
         std::string lossName = line("loss mse|bce|cce", raw.target(0).size() == 1 ? "mse" : "cce");
         auto loss = LossFactory::create(lossName);
         if (lossName == "bce" && raw.target(0).size() != 1)
-            throw std::invalid_argument("bce needs a 1-output network");
+            throw std::invalid_argument("bce needs a 1-output network (use mse|cce for multi-output)");
+        if (lossName == "cce" && raw.target(0).size() < 2)
+            throw std::invalid_argument("cce needs one-hot multi-output targets (out dim >= 2); "
+                                        "use mse|bce for 1-output networks");
         std::string optName = line("optimizer sgd|momentum|adam", "adam");
-        double lr = std::stod(line("learning rate", optName == "adam" ? "0.01" : "0.1"));
+        double lr = parseDouble(line("learning rate", optName == "adam" ? "0.01" : "0.1"),
+                                "learning rate");
+        if (!(lr > 0.0) || lr > 5.0)
+            throw std::invalid_argument("learning rate must be in (0, 5] (try 0.5 SGD/momentum, 0.01 Adam); "
+                                        "got " + std::to_string(lr) + " which will diverge to NaN");
         auto opt = OptimizerFactory::create(optName, lr);
-        int epochs = std::stoi(line("epochs", "1500"));
-        int batch = std::stoi(line("batch size (0=full)", "8"));
-        unsigned seed = unsigned(std::stoul(line("seed", "42")));
+        int epochs = parseInt(line("epochs", "1500"), "epochs");
+        if (epochs < 1 || epochs > 200000)
+            throw std::invalid_argument("epochs must be in 1..200000");
+        int batch = parseInt(line("batch size (0=full)", "8"), "batch size");
+        if (batch < 0)
+            throw std::invalid_argument("batch size must be >= 0 (0 = full batch)");
+        if (std::size_t(batch) > trFull.size() && batch != 0) {
+            std::cout << "note: batch " << batch << " > train size " << trFull.size()
+                      << ", clamped to " << trFull.size() << " (full batch)\n";
+            batch = int(trFull.size());
+        }
+        unsigned seed;
+        {
+            long v = parseInt(line("seed", "42"), "seed");
+            if (v < 0) throw std::invalid_argument("seed must be >= 0");
+            seed = static_cast<unsigned>(v);
+        }
 
         // ---- build ----
         std::mt19937 rng(seed);
@@ -145,22 +220,19 @@ int main() {
         ModelSerializer::save(net, "playground.model");
         std::cout << "saved playground.model + playground_loss.csv\n";
 
-        HtmlReport report("MiniANN playground run");
-        ReportSeries rs;
-        rs.name = optName + " lr=" + std::to_string(lr);
-        rs.loss = h.trainLoss;
-        rs.acc = h.trainAcc;
-        report.addSeries(rs);
-        report.setBoundary(&net, &trFull);
-        report.addPre("network structure", ng.render());
-        WeightsTable wt(net);
-        report.addPre("learned weights", wt.render());
+        HtmlReport report = HtmlReportBuilder("MiniANN playground run")
+                                  .withSeries(optName + " lr=" + std::to_string(lr), h)
+                                  .withBoundary(net, trFull)
+                                  .withPre("network structure", ng.render())
+                                  .withPre("learned weights", WeightsTable(net).render())
+                                  .build();
         report.save("playground_report.html");
         std::cout << "HTML report -> playground_report.html (open in a browser)\n";
 
         // ---- visuals ----
         LossCurve lc(h);
         AccuracyCurve ac(h);
+        WeightsTable wt(net);
         std::cout << "\n--- " << lc.title() << " ---\n" << lc.render();
         std::cout << "\n--- " << ac.title() << " ---\n" << ac.render();
         if (raw.input(0).size() == 2 && raw.target(0).size() == 1) {
