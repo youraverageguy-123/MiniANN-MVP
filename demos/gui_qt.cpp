@@ -565,7 +565,8 @@ protected:
         p.fillRect(rect(), QColor(0x09, 0x0A, 0x0F));
         const int m = 14;
         // Top inset leaves room for the source tag; bottom for column labels.
-        QRect area(m, m + 22, width() - 2 * m, height() - 2 * m - 22 - 26);
+        // Increased from 22 to 36px so the tag no longer collides with the first neuron row.
+        QRect area(m, m + 36, width() - 2 * m, height() - 2 * m - 36 - 26);
         if (area.width() < 40 || area.height() < 40) return;
         p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
         p.setBrush(Qt::NoBrush);
@@ -681,7 +682,7 @@ protected:
             p.setFont(tf);
             p.setPen(QColor(0x8A, 0x90, 0xA0));
             QString tag = fontMetrics().elidedText(m_tag, Qt::ElideRight, area.width() - 8);
-            p.drawText(QRect(area.left() + 4, area.top() + 2, area.width() - 8, 16),
+            p.drawText(QRect(area.left() + 4, area.top() + 6, area.width() - 8, 16),
                        Qt::AlignLeft | Qt::AlignTop, tag);
         }
     }
@@ -990,6 +991,8 @@ private:
     QWidget* m_plotStack = nullptr;
     QLabel* m_summaryBar = nullptr;
     QTimer* m_timer = nullptr;
+    QSlider* m_speedSlider = nullptr;
+    QPushButton* m_stepBtn = nullptr;
 
     static void checkOnly(const std::vector<QPushButton*>& v, int idx) {
         for (int i = 0; i < (int)v.size(); ++i)
@@ -1602,6 +1605,75 @@ private:
         connect(m_loadBtn, &QPushButton::clicked, [this]() { onLoadModel(); });
         modelRow->addWidget(m_saveBtn, 1);
         modelRow->addWidget(m_loadBtn, 1);
+        // Speed control for small-dataset visibility: throttles how many epochs
+        // are rendered per GUI update tick, so users can watch learning on XOR/AND/OR.
+        m_speedSlider = new QSlider(Qt::Horizontal);
+        m_speedSlider->setRange(1, 20);
+        m_speedSlider->setValue(1);
+        m_speedSlider->setFixedWidth(60);
+        m_speedSlider->setToolTip("Epochs per update tick (1 = fastest, 20 = slowest)");
+        modelRow->addWidget(m_speedSlider);
+        m_stepBtn = new QPushButton(QStringLiteral("[Step 1]"));
+        m_stepBtn->setFixedWidth(70);
+        m_stepBtn->setToolTip("Advance one step of epochs (respects speed setting)");
+        connect(m_stepBtn, &QPushButton::clicked, [this]() {
+            if (g_bridge.isTraining) return;
+            ExperimentConfig cfg = currentConfig();
+            g_bridge.resetLive();
+            m_resultsShownFor = false;
+            m_seenSeq = g_bridge.runSeq;
+            g_bridge.isTraining = true;
+            g_bridge.stopRequested = false;
+            g_trainThread = std::make_unique<std::thread>([cfg]() {
+                ExperimentResult res = ExperimentController::run(cfg, &g_bridge, &g_bridge.stopRequested);
+                std::lock_guard<std::mutex> lock(g_bridge.mtx);
+                if (!res.error.empty()) {
+                    g_bridge.lastError = std::string("Error: ") + res.error;
+                } else {
+                    char buf[256];
+                    std::snprintf(buf, sizeof(buf),
+                                  "Train loss %.4f | Train acc %.1f%% | Test acc %.1f%% (%.2fs)%s",
+                                  res.trainLoss, res.trainAcc * 100.0, res.testAcc * 100.0,
+                                  res.seconds, res.stopped ? " — stopped" : "");
+                    g_bridge.summary = buf;
+                    g_bridge.hasResult = true;
+                    g_bridge.lastCompleted = !res.stopped;
+                    g_bridge.lastStopped = res.stopped;
+                    g_bridge.lastTrainLoss = res.trainLoss;
+                    g_bridge.lastTrainAcc = res.trainAcc;
+                    g_bridge.lastValLoss = res.valLoss;
+                    g_bridge.lastValAcc = res.valAcc;
+                    g_bridge.lastTestLoss = res.testLoss;
+                    g_bridge.lastTestAcc = res.testAcc;
+                    g_bridge.lastHasVal = res.hasVal;
+                    g_bridge.lastWarning = res.warning;
+                    g_bridge.lastConfusion = res.confusion;
+                    g_bridge.lastNumClasses = res.numClasses;
+                    g_bridge.lastHasConfusion = res.hasConfusion;
+                    g_bridge.lastArch = describeNet(res.net);
+                    g_bridge.lastOptDesc = cfg.optimizer + " lr=" + std::to_string(cfg.opt.learningRate);
+                    std::size_t effB = (cfg.batchSize == 0 || cfg.batchSize > res.data.nTrain)
+                        ? res.data.nTrain : cfg.batchSize;
+                    g_bridge.lastBatchTxt = (cfg.batchSize == 0 ? std::string("full")
+                        : std::to_string(cfg.batchSize)) + " (eff " + std::to_string(effB) + ")";
+                    g_bridge.lastSeed = (int)cfg.seed;
+                    g_bridge.lastDsDesc = res.data.name + " " + std::to_string(res.data.samples) + " samples";
+                    g_bridge.lastLoss = cfg.loss;
+                    if (res.hasNet) {
+                        g_bridge.lastNet = std::make_shared<NeuralNetwork>(res.net);
+                        g_bridge.lastTrain = res.data.train;
+                        g_bridge.lastTest = res.data.test;
+                        g_bridge.lastInDim = res.data.inDim;
+                        g_bridge.lastOutDim = res.data.outDim;
+                        g_bridge.lastEpochsRun = (int)res.history.trainLoss.size();
+                        g_bridge.lastEpochsTarget = cfg.epochs;
+                        g_bridge.lastTiny = res.data.tiny;
+                    }
+                }
+                g_bridge.isTraining = false;
+            });
+        });
+        modelRow->addWidget(m_stepBtn);
         outer->addLayout(modelRow);
         m_trainBtn = new QPushButton(QStringLiteral("START TRAINING"));
         m_trainBtn->setObjectName(QStringLiteral("trainBtn"));
