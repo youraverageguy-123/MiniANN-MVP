@@ -1260,7 +1260,9 @@ public:
             lay->addLayout(row);
         };
 
-        addRow(QStringLiteral("Space"), QStringLiteral("Start / Stop Training"));
+        addRow(QStringLiteral("Space / F5"), QStringLiteral("Start / Stop Training"));
+        addRow(QStringLiteral("Esc"), QStringLiteral("Abort / Stop Active Training"));
+        addRow(QStringLiteral("Ctrl + R"), QStringLiteral("Reset Configuration to Defaults"));
         addRow(QStringLiteral("Ctrl + E"), QStringLiteral("Export Standalone HTML Report"));
         addRow(QStringLiteral("Ctrl + S"), QStringLiteral("Save Trained Model"));
         addRow(QStringLiteral("Ctrl + O"), QStringLiteral("Load Model File"));
@@ -1277,7 +1279,21 @@ public:
     }
 
     void keyPressEvent(QKeyEvent* e) override {
-        if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+        if (e->key() == Qt::Key_Escape) {
+            if (g_bridge.isTraining) {
+                onTrainClicked();
+                showToast(QStringLiteral("Training aborted (Esc)"), QStringLiteral("warn"));
+                return;
+            }
+        } else if ((e->modifiers() & Qt::ControlModifier) && e->key() == Qt::Key_R) {
+            applyPresetXor(true);
+            showToast(QStringLiteral("Reset to default configuration (Ctrl+R)"), QStringLiteral("info"));
+            return;
+        } else if ((e->key() == Qt::Key_F5) ||
+                   ((e->modifiers() & Qt::ControlModifier) && (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter))) {
+            onTrainClicked();
+            return;
+        } else if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
             QWidget* f = focusWidget();
             if (f && (f->inherits("QLineEdit") || f->inherits("QSpinBox") ||
                       f->inherits("QDoubleSpinBox") || f->inherits("QAbstractSpinBox"))) {
@@ -1798,6 +1814,17 @@ private:
         for (int i = 0; i < 5; ++i) {
             connect(m_dsBtns[(std::size_t)i], &QPushButton::clicked, [this, i]() {
                 m_dataset = ActiveDataset(i);
+                if (m_dataset == DS_IRIS) {
+                    if (m_loss == LOSS_BCE) {
+                        m_loss = LOSS_CCE;
+                        m_lossGroup.checkOnly(LOSS_CCE);
+                    }
+                } else if (m_dataset == DS_AND || m_dataset == DS_OR || m_dataset == DS_XOR) {
+                    if (m_loss == LOSS_CCE) {
+                        m_loss = LOSS_MSE;
+                        m_lossGroup.checkOnly(LOSS_MSE);
+                    }
+                }
                 configChanged();
             });
         }
@@ -2245,6 +2272,7 @@ private:
         m_weightDecaySpin->setSingleStep(0.0001);
         m_weightDecaySpin->setValue(0.0);
         m_weightDecaySpin->setSpecialValueText(QStringLiteral("0 (none)"));
+        m_weightDecaySpin->setToolTip(QStringLiteral("L2 regularization penalty (lambda) added to gradients to shrink weights and reduce overfitting"));
         connect(m_weightDecaySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
             m_weightDecay = v;
             configChanged();
@@ -2263,6 +2291,7 @@ private:
         m_gradClipSpin->setDecimals(2);
         m_gradClipSpin->setValue(0.0);
         m_gradClipSpin->setSpecialValueText(QStringLiteral("none"));
+        m_gradClipSpin->setToolTip(QStringLiteral("Global L2 gradient norm threshold (0 = none). Rescales gradients if norm exceeds threshold to prevent numerical explosions"));
         connect(m_gradClipSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
             m_gradClip = v;
             configChanged();
