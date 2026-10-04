@@ -10,6 +10,7 @@
 #include "miniann/loss.hpp"
 #include "miniann/optimizer.hpp"
 #include "miniann/trainer.hpp"
+#include "miniann/callbacks.hpp"
 #include "miniann/dataset.hpp"
 #include "miniann/metrics.hpp"
 #include "miniann/logger.hpp"
