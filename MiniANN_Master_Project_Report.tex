@@ -40,6 +40,7 @@
 
 \begin{document}
 
+% --- TITLE BLOCK ---
 \begin{center}
     {\LARGE \textbf{MiniANN: C++ Artificial Neural Network Library}}\\[6pt]
     {\large \textbf{Project Report --- Architecture, Features, OOP Mapping and UML Diagrams}}\\[10pt]
@@ -52,8 +53,7 @@
 \textbf{What this report is.} A self-contained technical report on the MiniANN codebase:
 what it does, how it is organised, which features it provides, and --- in detail --- where
 each Object-Oriented Programming (OOP) concept is used (with file references and
-class names). UML-style class diagrams are drawn directly in \LaTeX\ with TikZ so the
-document compiles with a plain \texttt{pdflatex} installation. A complete concrete mathematical trace for one training dry run is detailed, and recent system extensions (including the RMSprop optimiser, ELU activation, $L_2$ weight decay, gradient norm clipping, and the interactive 3D OpenGL Network Viewer) are fully documented.
+class names). UML-style class diagrams and end-to-end operational flowcharts are drawn directly in \LaTeX\ with TikZ so the document compiles cleanly with a plain \texttt{pdflatex} installation. A complete concrete mathematical trace for one training dry run is detailed, and system extensions (including the RMSprop optimiser, ELU activation, $L_2$ weight decay, gradient norm clipping, and the interactive 3D OpenGL Network Viewer) are fully documented.
 
 \vspace{1em}
 \tableofcontents
@@ -373,6 +373,9 @@ During iterative training, decoupling telemetry from computational math is param
 \subsubsection{Visitor Pattern (\texttt{INetworkVisitor})}
 To perform non-intrusive operations across the network structure (such as serialisation formatting, statistics collection, or parameter decay), \texttt{NeuralNetwork} implements \texttt{accept(INetworkVisitor\& visitor)}. The visitor visits each layer and neuron sequentially, separating operational algorithms from the network data structure.
 
+\subsubsection{Composite Pattern (\texttt{CompositeValidator}, \texttt{CallbackList})}
+The Composite pattern is used to aggregate atomic operations into unified executable units. \texttt{CompositeValidator} implements \texttt{IValidator} and holds a collection of child validators (\texttt{DimensionValidator}, \texttt{NaNValidator}, \texttt{ClassCountValidator}). Calling \texttt{validate()} on the composite executes the entire validation pipeline uniformly.
+
 \newpage
 % ==============================================================================
 % SECTION 8: UML / CLASS DIAGRAMS
@@ -438,7 +441,7 @@ To perform non-intrusive operations across the network structure (such as serial
     \draw[compose] (neuron) -- node[right, font=\tiny]{has-many} (layer);
     \draw[shares] (iact) -- node[above, font=\tiny]{shares} (neuron);
 \end{tikzpicture}
-\caption{Core Composition Backbone: \texttt{NeuralNetwork} $\blacklozenge\to$ \texttt{Layer} $\blacklozenge\to$ \texttt{Neuron} $\lozenge\to$ \texttt{IActivation}. Lifetime flows downward; activation objects are shared and immutable.}
+\caption{Figure 1: Core Composition Backbone: \texttt{NeuralNetwork} $\blacklozenge\to$ \texttt{Layer} $\blacklozenge\to$ \texttt{Neuron} $\lozenge\to$ \texttt{IActivation}. Lifetime flows downward; activation objects are shared and immutable.}
 \end{figure}
 
 \begin{figure}[htbp]
@@ -493,7 +496,7 @@ To perform non-intrusive operations across the network structure (such as serial
     \draw[inherit] (adam) -- (iopt);
     \draw[inherit] (rmsprop) -- (iopt);
 \end{tikzpicture}
-\caption{Strategy Hierarchies for Activations, Losses, and Optimisers. Concrete strategies are instantiated via corresponding Factory classes from runtime string tokens.}
+\caption{Figure 2: Strategy Hierarchies for Activations, Losses, and Optimisers. Concrete strategies are instantiated via corresponding Factory classes from runtime string tokens.}
 \end{figure}
 
 \begin{figure}[htbp]
@@ -544,29 +547,211 @@ To perform non-intrusive operations across the network structure (such as serial
     \draw[arrow] (trainer) -- node[right, font=\tiny]{notifies} (cb);
     \draw[-{Triangle[fill=white]}, thick] (live) -- (cb);
 \end{tikzpicture}
-\caption{Training Collaboration: \texttt{Trainer} aggregates references to the model, loss, and optimiser; executes training using \texttt{TrainingConfig}, records \texttt{TrainingHistory}, and notifies \texttt{TrainingCallback} observers.}
+\caption{Figure 3: Training Collaboration: \texttt{Trainer} aggregates references to the model, loss, and optimiser; executes training using \texttt{TrainingConfig}, records \texttt{TrainingHistory}, and notifies \texttt{TrainingCallback} observers.}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    class/.style={draw, rectangle, text width=3.8cm, align=left, font=\scriptsize},
+    inherit/.style={-{Triangle[fill=white]}, thick},
+    compose/.style={-{Diamond[fill=black]}, thick},
+    arrow/.style={-Latex, dashed, thick}
+]
+    \node[class] (iviz) {
+        \textbf{\textit{IVisualizer}}\\[2pt]
+        \rule{3.8cm}{0.4pt}\\[2pt]
+        $+$ render() : string\\
+        $+$ title() : string
+    };
+
+    \node[draw, rectangle, text width=3.4cm, align=center, font=\scriptsize, below left=0.8cm and -0.4cm of iviz] (subviz) {
+        LossCurve / AccuracyCurve\\
+        BoundaryMap / NetworkGraph\\
+        WeightsTable
+    };
+
+    \node[class, below right=0.8cm and -0.4cm of iviz] (html) {
+        \textbf{HtmlReport : IVisualizer}\\[2pt]
+        \rule{3.8cm}{0.4pt}\\[2pt]
+        $+$ addSeries(s)\\
+        $+$ addSection(ptr)\\
+        $+$ save(path)
+    };
+
+    \node[class, below=0.8cm of html] (isec) {
+        \textbf{\textit{IHtmlSection}}\\[2pt]
+        \rule{3.8cm}{0.4pt}\\[2pt]
+        $+$ toHtml() : string
+    };
+
+    \node[draw, rectangle, text width=3.2cm, align=center, font=\scriptsize, left=0.8cm of isec] (secsub) {
+        ConfigSection /\\
+        SummarySection
+    };
+
+    \node[class, below=0.8cm of isec] (bld) {
+        \textbf{HtmlReportBuilder}\\[2pt]
+        \rule{3.8cm}{0.4pt}\\[2pt]
+        $+$ withSeries()\\
+        $+$ withBoundary()\\
+        $+$ build() : HtmlReport
+    };
+
+    \draw[inherit] (subviz) -- (iviz);
+    \draw[inherit] (html) -- (iviz);
+    \draw[compose] (isec) -- node[right, font=\tiny]{has-many} (html);
+    \draw[inherit] (secsub) -- (isec);
+    \draw[arrow] (bld) -- node[right, font=\tiny]{builds} (isec);
+\end{tikzpicture}
+\caption{Figure 4: Visualisation and Reporting: Polymorphic visualisers plus composable HTML reports (Open/Closed via \texttt{IHtmlSection}) assembled by \texttt{HtmlReportBuilder}.}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    class/.style={draw, rectangle, text width=4.0cm, align=left, font=\scriptsize},
+    inherit/.style={-{Triangle[fill=white]}, thick},
+    arrow/.style={-Latex, thick}
+]
+    \node[class] (ids) {
+        \textbf{\textit{IDatasetSource}}\\[2pt]
+        \rule{4.0cm}{0.4pt}\\[2pt]
+        $+$ key() : string\\
+        $+$ load(cfg) : LoadedRaw
+    };
+    \node[draw, rectangle, text width=3.6cm, align=center, font=\scriptsize, below=0.6cm of ids] (dsimpl) {
+        And / Or / Xor /\\
+        Iris / CsvSource\\[2pt]
+        \textit{\tiny Factory: DatasetSourceFactory}
+    };
+    \draw[inherit] (dsimpl) -- (ids);
+
+    \node[class, right=1.8cm of ids] (its) {
+        \textbf{\textit{ITargetSelector}}\\[2pt]
+        \rule{4.0cm}{0.4pt}\\[2pt]
+        $+$ tryPick(scan, out) : bool\\
+        $+$ name() : string
+    };
+    \node[draw, rectangle, text width=3.6cm, align=center, font=\scriptsize, below=0.6cm of its] (tsimpl) {
+        HeaderName / DistinctValue /\\
+        LastColumnSelector
+    };
+    \draw[inherit] (tsimpl) -- (its);
+
+    \node[class, below=0.8cm of tsimpl] (chain) {
+        \textbf{TargetSelectorChain}\\[2pt]
+        \rule{4.0cm}{0.4pt}\\[2pt]
+        $+$ addLink(ptr) : void\\
+        $+$ select(scan) : TargetChoice
+    };
+    \draw[arrow] (chain) -- node[right, font=\tiny]{ordered links} (tsimpl);
+\end{tikzpicture}
+\caption{Figure 5: Polymorphic Data Sourcing (Factory) and CSV Target Column Election (Chain of Responsibility).}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    class/.style={draw, rectangle, text width=4.2cm, align=left, font=\scriptsize},
+    arrow/.style={-Latex, thick},
+    compose/.style={-{Diamond[fill=black]}, thick}
+]
+    \node[class] (w3d) {
+        \textbf{Network3DWidget}\\[2pt]
+        \rule{4.2cm}{0.4pt}\\[2pt]
+        $+$ setSnapshot(snap : NetSnapshot3D)\\
+        $+$ setWeightThreshold(th : float)\\
+        $+$ setFocusLayer(layer : int)\\
+        $+$ resetView() : void\\
+        $+$ pickNeuron(screenX, screenY)
+    };
+
+    \node[class, below left=0.8cm and -1.0cm of w3d] (cam) {
+        \textbf{Camera3D}\\[2pt]
+        \rule{4.2cm}{0.4pt}\\[2pt]
+        yaw, pitch, distance, target\\
+        $+$ orbit(dx, dy)\\
+        $+$ pan(dx, dy)\\
+        $+$ zoom(delta)\\
+        $+$ viewMatrix(), projMatrix()
+    };
+
+    \node[class, below right=0.8cm and -1.0cm of w3d] (lay) {
+        \textbf{Layout3D \& EdgeBudget}\\[2pt]
+        \rule{4.2cm}{0.4pt}\\[2pt]
+        $+$ computeNodePositions(sizes)\\
+        $+$ filterVisibleEdges(weights, th)\\
+        $+$ maxEdgesBudget : int
+    };
+
+    \draw[compose] (cam) -- node[left, font=\tiny]{composes} (w3d);
+    \draw[compose] (lay) -- node[right, font=\tiny]{composes} (w3d);
+\end{tikzpicture}
+\caption{Figure 6: Interactive 3D OpenGL Network Viewer Architecture. Encapsulates spatial projection and edge budgeting, decoupled from the training engine.}
 \end{figure}
 
 \newpage
 % ==============================================================================
 % SECTION 9: DYNAMIC VIEW & CONCRETE DRY RUN TRACE
 % ==============================================================================
-\section{Dynamic View \& Concrete Dry Run Trace}
+\section{Dynamic View \& Flow Diagrams}
 
-\subsection{Per-batch training sequence}
-The execution order within each batch strictly enforces mathematical invariants:
-\begin{enumerate}[itemsep=2pt]
-    \item \texttt{net.zeroGradients()} zeroes accumulated weight and bias gradients across all layers.
-    \item For each sample:
-    \begin{itemize}[itemsep=1pt]
-        \item \texttt{net.predict(x)} executes forward propagation, caching inputs $a^{[l-1]}$ and pre-activations $z^{[l]}$.
-        \item \texttt{loss.gradient(pred, target)} computes output error derivative $\nabla_{\hat{y}}\mathcal{L}$.
-        \item \texttt{net.backward(dL/dOut)} propagates deltas backward, accumulating gradients: $\mathbf{g}_W \mathrel{+}= \boldsymbol{\delta} \mathbf{a}^T$, $g_b \mathrel{+}= \delta$.
-    \end{itemize}
-    \item \textbf{Regularisation:} If $\lambda > 0$, add $L_2$ weight penalty to accumulated gradients.
-    \item \textbf{Grad Clipping:} If enabled, evaluate $\|g\|_2$; scale down if norm exceeds threshold.
-    \item \texttt{optimizer.step(net, B)}: Optimiser updates weights using averaged gradients $\frac{1}{B} \mathbf{g}$. Crucially, weights are read before mutation, ensuring subsequent layer backward passes are mathematically untainted.
-\end{enumerate}
+\subsection{Per-batch training sequence flow}
+Figure 7 illustrates the exact step-by-step execution flow within each mini-batch in \texttt{Trainer::fit}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=0.8cm,
+    stepnode/.style={draw, rectangle, text width=8.5cm, align=center, font=\small},
+    arrow/.style={-Latex, thick}
+]
+    \node[stepnode] (call) {\texttt{Caller: Trainer::fit()}};
+    \node[stepnode, below=of call] (zero) {\texttt{net.zeroGradients()} (clears accumulated gradients)};
+    \node[stepnode, below=of zero] (fwd) {\texttt{per sample: net.predict(x)} (caches inputs and $z$ values)};
+    \node[stepnode, below=of fwd] (loss) {\texttt{loss.gradient(pred, target)} (evaluates output error)};
+    \node[stepnode, below=of loss] (bwd) {\texttt{net.backward(dL/dOut)} (accumulates: $\mathbf{g}_W \mathrel{+}= \boldsymbol{\delta}\mathbf{a}^T, g_b \mathrel{+}= \delta$)};
+    \node[stepnode, below=of bwd] (clip) {\texttt{regularisation \& grad norm clipping} (adds $\lambda\mathbf{W}$, clamps $\|g\|_2$)};
+    \node[stepnode, below=of clip] (opt) {\texttt{opt->step(net, B)} (reads weights before update, averages by $1/B$)};
+    \node[stepnode, below=of opt] (obs) {\texttt{logger->log() + callback->onEpoch() + record history}};
+
+    \draw[arrow] (call) -- (zero);
+    \draw[arrow] (zero) -- (fwd);
+    \draw[arrow] (fwd) -- (loss);
+    \draw[arrow] (loss) -- (bwd);
+    \draw[arrow] (bwd) -- (clip);
+    \draw[arrow] (clip) -- (opt);
+    \draw[arrow] (opt) -- (obs);
+\end{tikzpicture}
+\caption{Figure 7: Per-Batch Sequence Flow. The critical seam order ensures that layer backward propagation reads pre-update weights before the optimiser step mutates them.}
+\end{figure}
+
+\subsection{ExperimentController end-to-end pipeline flow}
+Figure 8 illustrates the end-to-end dataflow from user input in the Qt workbench / CLI through the Fa\c{c}ade controller to output artefacts.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    node distance=0.7cm,
+    pipenode/.style={draw, rectangle, text width=10.5cm, align=left, font=\footnotesize},
+    arrow/.style={-Latex, thick}
+]
+    \node[pipenode] (p1) {\textbf{1. Ingestion \& Configuration:}\\UI / CLI builds \texttt{ExperimentConfig} (dataset, layers, activations, loss, optimiser, splits)};
+    \node[pipenode, below=of p1] (p2) {\textbf{2. Data Preparation (\texttt{ExperimentController::prepare}):}\\Loads via \texttt{IDatasetSource} $\to$ \texttt{TargetSelectorChain} elects labels $\to$ \texttt{splitTrainValTest()} $\to$ Normalises features via \texttt{INormalizer}};
+    \node[pipenode, below=of p2] (p3) {\textbf{3. Validation (\texttt{CompositeValidator}):}\\Enforces dimension checks, NaN/Inf detection, class balance, and loss compatibility};
+    \node[pipenode, below=of p3] (p4) {\textbf{4. Model Assembly (Factories):}\\Builds \texttt{NeuralNetwork} layers using \texttt{ActivationFactory}, sets \texttt{LossFactory}, \texttt{OptimizerFactory}, and Xavier/He weights};
+    \node[pipenode, below=of p4] (p5) {\textbf{5. Asynchronous Training (\texttt{Trainer::fit}):}\\Spawns worker thread $\to$ executes batch loops $\to$ streams metrics via \texttt{LiveBridge} to 2D/3D GUI};
+    \node[pipenode, below=of p5] (p6) {\textbf{6. Evaluation \& Output Artefacts:}\\Computes test \texttt{Accuracy} and \texttt{ConfusionMatrix} $\to$ Saves \texttt{MINIANN} model file $\to$ Exports standalone HTML report};
+
+    \draw[arrow] (p1) -- (p2);
+    \draw[arrow] (p2) -- (p3);
+    \draw[arrow] (p3) -- (p4);
+    \draw[arrow] (p4) -- (p5);
+    \draw[arrow] (p5) -- (p6);
+\end{tikzpicture}
+\caption{Figure 8: Complete End-to-End System Dataflow through the \texttt{ExperimentController} Fa\c{c}ade.}
+\end{figure}
 
 \subsection{Concrete mathematical trace for 1 dry run}
 We trace a complete forward and backward step on a $2 \to 2 \to 1$ network solving XOR.
@@ -686,5 +871,38 @@ int main() {
 MiniANN demonstrates that a complete neural-network simulation laboratory --- dense layers, eight activations, three loss functions, four optimisers, regularisation, gradient norm clipping, metrics, file persistence, terminal visualization, HTML reports, and an interactive desktop workbench featuring both 2D analytics and hardware-accelerated 3D OpenGL network rendering --- fits cleanly into dependency-free C++17/C++20 when structured around disciplined object-oriented programming.
 
 The strict encapsulation of mathematical invariants, coupled with flexible GoF design patterns (Strategy, Observer, Factory, Builder, Chain of Responsibility, Visitor, Composite, Fa\c{c}ade, and Bridge), produces an architecture that is simultaneously mathematically verifiable, highly extensible, and straightforward to inspect.
+
+% ==============================================================================
+% APPENDIX A: QUICK REFERENCE
+% ==============================================================================
+\section*{Appendix A --- Quick Reference}
+\addcontentsline{toc}{section}{Appendix A --- Quick Reference}
+
+\begin{table}[htbp]
+\small
+\centering
+\begin{tabularx}{\textwidth}{llX}
+\toprule
+\textbf{Concern / Pattern} & \textbf{File Location} & \textbf{Key Symbol / Class} \\
+\midrule
+Abstraction (optimisers) & \texttt{optimizer.hpp:10} & \texttt{IOptimizer} \\
+Loss interface & \texttt{loss.hpp:9} & \texttt{ILoss} \\
+Activation interface & \texttt{activation.hpp:10} & \texttt{IActivation} \\
+Composition root & \texttt{network.hpp:18} & \texttt{NeuralNetwork::layers\_} \\
+Neuron encapsulation & \texttt{neuron.hpp} & \texttt{weights\_}, \texttt{gradWeights\_}, \texttt{lastZ\_} \\
+Training execution & \texttt{trainer.hpp:38} & \texttt{Trainer::fit()} \\
+Observer hook & \texttt{trainer.hpp:31} & \texttt{TrainingCallback} \\
+Optimiser factory & \texttt{optimizer.hpp} & \texttt{OptimizerFactory} \\
+Report builder & \texttt{report.hpp} & \texttt{HtmlReportBuilder} \\
+Dataset election chain & \texttt{datasource.hpp} & \texttt{TargetSelectorChain} \\
+Fa\c{c}ade controller & \texttt{experiment.hpp} & \texttt{ExperimentController} \\
+Composite validator & \texttt{validate.hpp} & \texttt{CompositeValidator} \\
+Visitor traversal & \texttt{network.hpp} & \texttt{INetworkVisitor} \\
+3D Network Renderer & \texttt{network3d\_widget.hpp} & \texttt{Network3DWidget} \\
+Umbrella header & \texttt{miniann.hpp} & \texttt{miniann/miniann.hpp} \\
+\bottomrule
+\end{tabularx}
+\caption{Architectural Quick Reference and Code Symbols}
+\end{table}
 
 \end{document}
