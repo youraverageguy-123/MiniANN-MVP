@@ -29,6 +29,7 @@
 #include <QPointer>
 #include <QDialogButtonBox>
 #include <QTableWidget>
+#include <QListWidget>
 #include <QHeaderView>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -62,6 +63,7 @@
 #include "miniann/report.hpp"
 #include "miniann/visualizer.hpp"
 #include "miniann/scheduler.hpp"
+#include "network3d/network3d_widget.hpp"
 
 #include <vector>
 #include <string>
@@ -696,6 +698,53 @@ static std::vector<std::vector<double>> forwardViz(const VisualizationState& st,
         cur = nxt;
     }
     return acts;
+}
+// 3D viewer feed: same snapshot content the 2D view renders, converted to the
+// moc-free net3d struct (weights/biases/acts/probe). No training involvement.
+static net3d::NetSnapshot3D toSnap3D(const VisualizationState& st, const Vector& probe) {
+    net3d::NetSnapshot3D s;
+    s.epoch = st.epoch;
+    s.inDim = st.inDim;
+    s.weights = st.weights;
+    s.biases = st.biases;
+    s.acts = st.layerActs;
+    s.probe = probe;
+    return s;
+}
+static std::size_t countParams3D(const VisualizationState& st) {
+    std::size_t total = 0;
+    for (std::size_t l = 0; l < st.weights.size(); ++l) {
+        const std::size_t nIn = (l == 0) ? st.inDim : (l - 1 < st.biases.size() ? st.biases[l - 1].size() : 0);
+        const std::size_t nOut = (l < st.biases.size()) ? st.biases[l].size() : 0;
+        total += nIn * nOut + nOut;
+    }
+    return total;
+}
+// Thousands separator, ASCII-safe ("118,282").
+static QString fmtCount(std::size_t n) {
+    std::string s = std::to_string(n);
+    for (int i = (int)s.size() - 3; i > 0; i -= 3) s.insert((std::size_t)i, ",");
+    return QString::fromStdString(s);
+}
+static net3d::NetSnapshot3D snap3DFromNet(const NeuralNetwork& net, const Vector& probe, int epoch) {
+    net3d::NetSnapshot3D s;
+    s.epoch = epoch;
+    s.probe = probe;
+    if (net.numLayers() == 0) return s;
+    s.inDim = net.layers()[0].inputSize();
+    for (const auto& layer : net.layers()) {
+        std::vector<std::vector<double>> w;
+        std::vector<double> b;
+        std::string an = layer.neurons().empty() ? "?" : layer.neurons()[0].activation().name();
+        for (const auto& n : layer.neurons()) {
+            w.push_back(n.weights());
+            b.push_back(n.bias());
+        }
+        s.weights.push_back(std::move(w));
+        s.biases.push_back(std::move(b));
+        s.acts.push_back(an);
+    }
+    return s;
 }
 
 class NetWidget : public QWidget {
@@ -1535,6 +1584,20 @@ private:
     bool m_hasVizProbe = false;
     QSlider* m_paceSlider = nullptr;
     QLabel* m_paceValLbl = nullptr;
+    // -- 3D network viewer (Network tab [2D][3D] mode) --
+    net3d::Network3DWidget* m_net3d = nullptr;
+    bool m_net3D = false;
+    QWidget* m_net3DBar = nullptr;
+    QPushButton* m_btn2D = nullptr, *m_btn3D = nullptr;
+    QSlider* m_wThreshSlider = nullptr;
+    QLabel* m_wThreshLbl = nullptr, *m_sel3DLbl = nullptr, *m_edgeCountLbl = nullptr;
+    QComboBox* m_focusCombo = nullptr;
+    std::string m_focusFp;
+    QWidget* m_sel3DPanel = nullptr;
+    QLabel* m_sel3DHead = nullptr;
+    QListWidget* m_sel3DIn = nullptr, *m_sel3DOut = nullptr;
+    int m_cSelIdx = -2;
+    int m_selCol3D = -1, m_selIdx3D = -1;
 
     // Exclusive checkable-button group: radio-button behavior for QPushButtons
     // without QButtonGroup's signal/slot machinery (no Q_OBJECT needed here).
@@ -2587,6 +2650,10 @@ private:
             m_viz.clear();
             m_playIdx = -1;
             m_playing = false;
+            m_selCol3D = -1;
+            m_selIdx3D = -1;
+            m_cSelIdx = -2;
+            if (m_sel3DPanel) m_sel3DPanel->setVisible(false);
             m_resultsShownFor = false;
             m_seenSeq = g_bridge.runSeq;
             g_bridge.isTraining = true;
@@ -2741,6 +2808,114 @@ private:
         m_playTimer = new QTimer(this);
         m_playTimer->setInterval(350);
         connect(m_playTimer, &QTimer::timeout, [this]() { advancePlayback(); });
+        // 3D toolbar: [2D][3D] mode, weak-weight threshold, reset view,
+        // selection readout. Visible only on the Network tab.
+        m_net3DBar = new QWidget;
+        auto* bar3D = new QHBoxLayout(m_net3DBar);
+        bar3D->setContentsMargins(0, 0, 0, 0);
+        bar3D->setSpacing(6);
+        m_btn2D = makeBtn(QStringLiteral("2D"), 52);
+        m_btn2D->setCheckable(true);
+        m_btn2D->setChecked(true);
+        m_btn2D->setToolTip("2D network diagram (architecture overview)");
+        connect(m_btn2D, &QPushButton::clicked, [this]() {
+            m_net3D = false;
+            m_btn2D->setChecked(true);
+            m_btn3D->setChecked(false);
+            syncTabs();
+        });
+        m_btn3D = makeBtn(QStringLiteral("3D"), 52);
+        m_btn3D->setCheckable(true);
+        m_btn3D->setChecked(false);
+        m_btn3D->setToolTip("3D network viewer (orbit/zoom/pan, large layers)");
+        connect(m_btn3D, &QPushButton::clicked, [this]() {
+            m_net3D = true;
+            m_btn3D->setChecked(true);
+            m_btn2D->setChecked(false);
+            syncTabs();
+        });
+        auto* edgeLbl = new QLabel(QStringLiteral("EDGE THRESHOLD"));
+        edgeLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:bold;"));
+        edgeLbl->setToolTip("Only connections stronger than this |weight| are rendered");
+        m_wThreshSlider = new QSlider(Qt::Horizontal);
+        m_wThreshSlider->setRange(0, 50);
+        m_wThreshSlider->setValue(5);
+        m_wThreshSlider->setFixedWidth(90);
+        m_wThreshSlider->setToolTip("Only connections stronger than this |weight| are rendered");
+        m_wThreshLbl = new QLabel(QStringLiteral("0.05"));
+        m_wThreshLbl->setStyleSheet(QStringLiteral("color:#60A5FA; font-family:'Consolas',monospace; font-size:11px;"));
+        m_wThreshLbl->setFixedWidth(36);
+        connect(m_wThreshSlider, &QSlider::valueChanged, [this](int v) {
+            if (m_net3d) m_net3d->setWeightThreshold((float)v / 100.0f);
+            if (m_wThreshLbl) m_wThreshLbl->setText(QString::asprintf("%.2f", (float)v / 100.0f));
+        });
+        m_edgeCountLbl = new QLabel(QStringLiteral("— connections"));
+        m_edgeCountLbl->setStyleSheet(QStringLiteral("color:#64748B; font-family:'Consolas',monospace; font-size:11px;"));
+        m_edgeCountLbl->setToolTip("Visible vs total connections in the 3D view");
+        auto* focusLbl = new QLabel(QStringLiteral("View:"));
+        focusLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:bold;"));
+        focusLbl->setToolTip("Focus a single layer (others dim)");
+        m_focusCombo = new QComboBox;
+        m_focusCombo->setMinimumWidth(110);
+        m_focusCombo->setToolTip("Focus a single layer (others dim)");
+        connect(m_focusCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int i) {
+            // Item data holds the layout column, or -1 for All layers.
+            int col = (i <= 0) ? -1 : m_focusCombo->itemData(i).toInt();
+            if (m_net3d) m_net3d->setFocusLayer(col);
+        });
+        auto* reset3DBtn = makeBtn(QStringLiteral("Reset View"), 90);
+        reset3DBtn->setToolTip("Reset 3D camera (or press R)");
+        connect(reset3DBtn, &QPushButton::clicked, [this]() {
+            if (m_net3d) m_net3d->resetView();
+        });
+        m_sel3DLbl = new QLabel(QStringLiteral("3D: click a neuron to inspect."));
+        m_sel3DLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px;"));
+        m_sel3DLbl->setWordWrap(true);
+        bar3D->addWidget(m_btn2D);
+        bar3D->addWidget(m_btn3D);
+        bar3D->addWidget(edgeLbl);
+        bar3D->addWidget(m_wThreshSlider);
+        bar3D->addWidget(m_wThreshLbl);
+        bar3D->addWidget(m_edgeCountLbl);
+        bar3D->addWidget(focusLbl);
+        bar3D->addWidget(m_focusCombo);
+        bar3D->addWidget(reset3DBtn);
+        bar3D->addWidget(m_sel3DLbl, 1);
+        m_net3DBar->setVisible(false);
+        rv->addWidget(m_net3DBar);
+        // Selected-neuron inspect panel: full fan-in/fan-out lists, scrollable
+        // for wide layers (784 fan-in stays readable). Shown on selection.
+        m_sel3DPanel = new QWidget;
+        auto* selLay = new QHBoxLayout(m_sel3DPanel);
+        selLay->setContentsMargins(0, 0, 0, 0);
+        selLay->setSpacing(8);
+        m_sel3DHead = new QLabel;
+        m_sel3DHead->setStyleSheet(QStringLiteral("color:#F1F5F9; font-size:11px; font-weight:bold;"));
+        m_sel3DHead->setWordWrap(true);
+        m_sel3DHead->setFixedWidth(170);
+        auto* inCol = new QVBoxLayout;
+        inCol->setSpacing(2);
+        auto* inLbl3D = new QLabel(QStringLiteral("INPUT CONNECTIONS"));
+        inLbl3D->setStyleSheet(QStringLiteral("color:#64748B; font-size:10px; font-weight:bold;"));
+        m_sel3DIn = new QListWidget;
+        m_sel3DIn->setMaximumHeight(110);
+        m_sel3DIn->setStyleSheet(QStringLiteral("background:#141824; color:#E2E8F0; border:1px solid #1E2333; border-radius:6px; font-family:'Consolas',monospace; font-size:11px;"));
+        inCol->addWidget(inLbl3D);
+        inCol->addWidget(m_sel3DIn);
+        auto* outCol = new QVBoxLayout;
+        outCol->setSpacing(2);
+        auto* outLbl3D = new QLabel(QStringLiteral("OUTPUT CONNECTIONS"));
+        outLbl3D->setStyleSheet(QStringLiteral("color:#64748B; font-size:10px; font-weight:bold;"));
+        m_sel3DOut = new QListWidget;
+        m_sel3DOut->setMaximumHeight(110);
+        m_sel3DOut->setStyleSheet(QStringLiteral("background:#141824; color:#E2E8F0; border:1px solid #1E2333; border-radius:6px; font-family:'Consolas',monospace; font-size:11px;"));
+        outCol->addWidget(outLbl3D);
+        outCol->addWidget(m_sel3DOut);
+        selLay->addWidget(m_sel3DHead);
+        selLay->addLayout(inCol, 1);
+        selLay->addLayout(outCol, 1);
+        m_sel3DPanel->setVisible(false);
+        rv->addWidget(m_sel3DPanel);
         m_plotStack = new QWidget;
         auto* stackLay = new QVBoxLayout(m_plotStack);
         stackLay->setContentsMargins(0, 0, 0, 0);
@@ -2752,9 +2927,27 @@ private:
         m_netview = new NetWidget;
         m_netview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         m_netview->setVisible(false);
+        m_net3d = new net3d::Network3DWidget;
+        m_net3d->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        m_net3d->setVisible(false);
+        m_net3d->setWeightThreshold(0.05f);
+        m_net3d->onNeuronSelected = [this](int c, int i) {
+            m_selCol3D = c;
+            m_selIdx3D = i;
+            if (!m_sel3DLbl || !m_net3d) return;
+            if (c < 0) {
+                m_sel3DLbl->setText(QStringLiteral("3D: click a neuron to inspect."));
+                if (m_sel3DPanel) m_sel3DPanel->setVisible(false);
+            } else {
+                m_sel3DLbl->setText(m_net3d->selectedInfo());
+                populateSel3DPanel(c, i);
+                if (m_sel3DPanel) m_sel3DPanel->setVisible(m_net3D && m_view == VIEW_NETWORK);
+            }
+        };
         stackLay->addWidget(m_plot);
         stackLay->addWidget(m_boundary);
         stackLay->addWidget(m_netview);
+        stackLay->addWidget(m_net3d);
         rv->addWidget(m_plotStack, 1);
         m_summaryBar = new QLabel(QStringLiteral("Ready to train."));
         m_summaryBar->setObjectName(QStringLiteral("panel"));
@@ -2947,6 +3140,10 @@ private:
         m_viz.clear();
         m_playIdx = -1;
         m_playing = false;
+        m_selCol3D = -1;
+        m_selIdx3D = -1;
+        m_cSelIdx = -2;
+        if (m_sel3DPanel) m_sel3DPanel->setVisible(false);
         if (m_playTimer && m_playTimer->isActive()) m_playTimer->stop();
         m_cVizIdx = -2; m_cFwdPhase = -2; m_cBndIdx = (std::size_t)-1;
         m_resultsShownFor = false;
@@ -2963,6 +3160,8 @@ private:
         m_shownNetFp = fp;
         if (!m_previewErr.empty()) {
             m_netview->setArch(ArchDesc{});
+            if (m_net3d) m_net3d->setArchSizes({});
+            refreshFocusCombo({});
             return;
         }
         ArchDesc ad;
@@ -2987,6 +3186,15 @@ private:
         ad.sizes.push_back(m_preview.outDim);
         ad.names.push_back(QStringLiteral("Output·") + shortAct(cfg.outputAct));
         m_netview->setArch(std::move(ad));
+        // 3D skeleton mirrors the same architecture (layout only, no weights).
+        if (m_net3d) {
+            std::vector<std::size_t> sizes3d;
+            sizes3d.push_back(m_preview.inDim);
+            for (int h : cfg.hidden) sizes3d.push_back((std::size_t)h);
+            sizes3d.push_back(m_preview.outDim);
+            m_net3d->setArchSizes(sizes3d);
+            refreshFocusCombo(sizes3d);
+        }
     }
 
     // Never throws into Qt: any unexpected failure becomes an error label
@@ -3145,7 +3353,11 @@ private:
         m_tabGroup.checkOnly((int)m_view);
         m_plot->setVisible(m_view == VIEW_LOSS || m_view == VIEW_ACC);
         m_boundary->setVisible(m_view == VIEW_BOUNDARY);
-        m_netview->setVisible(m_view == VIEW_NETWORK);
+        const bool onNet = (m_view == VIEW_NETWORK);
+        if (m_netview) m_netview->setVisible(onNet && !m_net3D);
+        if (m_net3d) m_net3d->setVisible(onNet && m_net3D);
+        if (m_net3DBar) m_net3DBar->setVisible(onNet);
+        if (m_sel3DPanel) m_sel3DPanel->setVisible(onNet && m_net3D && m_selCol3D >= 0);
         refreshLiveUi();
     }
 
@@ -3549,6 +3761,161 @@ private:
         if ((int)out.size() > topN) out.resize((std::size_t)topN);
         return out;
     }
+    void updateEdgeCount() {
+        if (!m_edgeCountLbl || !m_net3d) return;
+        m_edgeCountLbl->setText(QStringLiteral("Showing ") + fmtCount(m_net3d->visibleEdges()) +
+                                QStringLiteral(" / ") + fmtCount(m_net3d->totalEdges()));
+    }
+    // Focus-layer combo: All layers + one entry per layout column. Rebuilt
+    // only when the architecture changes; previous focus restored if valid.
+    void refreshFocusCombo(const std::vector<std::size_t>& sizes) {
+        if (!m_focusCombo) return;
+        std::string fp;
+        for (auto s : sizes) fp += std::to_string(s) + ",";
+        if (fp == m_focusFp) return;
+        m_focusFp = fp;
+        int keepCol = -1;
+        if (m_net3d) {
+            // Preserve focus across rebuilds when still valid.
+            keepCol = m_focusCombo->currentData().toInt();
+            if (m_focusCombo->count() <= 1) keepCol = -1;
+        }
+        m_focusCombo->blockSignals(true);
+        m_focusCombo->clear();
+        m_focusCombo->addItem(QStringLiteral("All layers"), -1);
+        if (!sizes.empty()) {
+            m_focusCombo->addItem(QStringLiteral("Input"), 0);
+            for (std::size_t l = 1; l + 1 < sizes.size(); ++l)
+                m_focusCombo->addItem(QString::asprintf("H%llu", (unsigned long long)l),
+                                      (int)l);
+            if (sizes.size() >= 2)
+                m_focusCombo->addItem(QStringLiteral("Output"), (int)sizes.size() - 1);
+        }
+        int restore = 0;
+        for (int i = 0; i < m_focusCombo->count(); ++i)
+            if (m_focusCombo->itemData(i).toInt() == keepCol) restore = i;
+        m_focusCombo->setCurrentIndex(restore);
+        m_focusCombo->blockSignals(false);
+        if (m_net3d) m_net3d->setFocusLayer(restore == 0 ? -1 : m_focusCombo->itemData(restore).toInt());
+    }
+    // Full fan-in/fan-out lists for the selected 3D neuron, sorted by |w|.
+    // Capped with a "+N more" tail so 784-wide layers stay usable.
+    void populateSel3DPanel(int c, int i) {
+        if (!m_sel3DHead || !m_sel3DIn || !m_sel3DOut) return;
+        int idx = selectedVizIdx();
+        if (idx < 0 || c < 0 || idx >= (int)m_viz.size()) return;
+        const VisualizationState& st = m_viz[(std::size_t)idx];
+        auto shortAct = [](const std::string& n) -> QString {
+            if (n == "sigmoid") return QStringLiteral("Sig");
+            if (n == "tanh") return QStringLiteral("Tanh");
+            if (n == "relu") return QStringLiteral("ReLU");
+            if (n == "leaky_relu") return QStringLiteral("L-ReLU");
+            if (n == "swish") return QStringLiteral("Swish");
+            return QStringLiteral("Lin");
+        };
+        const std::size_t nCols = st.weights.size() + 1;
+        if ((std::size_t)c >= nCols) return;
+        QString layerName;
+        std::string actName = "?";
+        double bias = 0.0, actVal = 0.0;
+        if (c == 0) {
+            layerName = QStringLiteral("Input");
+            Vector probe = vizProbe();
+            if (i >= 0 && (std::size_t)i < probe.size()) actVal = probe[(std::size_t)i];
+        } else {
+            const std::size_t li = (std::size_t)c - 1;
+            const bool isOut = (li + 1 == st.weights.size());
+            layerName = isOut ? QStringLiteral("Output")
+                              : QString::asprintf("Hidden %llu", (unsigned long long)c);
+            if (li < st.layerActs.size()) actName = st.layerActs[li];
+            if (li < st.biases.size() && (std::size_t)i < st.biases[li].size())
+                bias = st.biases[li][(std::size_t)i];
+            Vector probe = vizProbe();
+            if (!probe.empty()) {
+                auto fire = forwardViz(st, probe);
+                if ((std::size_t)c < fire.size() && (std::size_t)i < fire[(std::size_t)c].size())
+                    actVal = fire[(std::size_t)c][(std::size_t)i];
+            }
+            m_sel3DHead->setText(layerName + QString::asprintf(" [%d]  act %.3f  bias %+.3f  (%s)", i,
+                actVal, bias, shortAct(actName).toLatin1().constData()));
+        }
+        if (c == 0)
+            m_sel3DHead->setText(QString::asprintf("Input [%d]  value %.4f", i, actVal));
+        m_sel3DIn->clear();
+        m_sel3DOut->clear();
+        const std::size_t kCap = 2048;
+        if (c > 0 && (std::size_t)(c - 1) < st.weights.size() &&
+            (std::size_t)i < st.weights[(std::size_t)(c - 1)].size()) {
+            const auto& wIn = st.weights[(std::size_t)(c - 1)][(std::size_t)i];
+            std::vector<std::pair<double, int>> order;
+            for (std::size_t k = 0; k < wIn.size(); ++k) order.emplace_back(std::abs(wIn[k]), (int)k);
+            std::sort(order.begin(), order.end(),
+                      [](const auto& x, const auto& y) { return x.first > y.first; });
+            for (std::size_t k = 0; k < order.size() && k < kCap; ++k) {
+                const char* src = (c == 1) ? "x" : "H";
+                int srcL = (c == 1) ? -1 : c - 1;
+                QString row = (srcL < 0)
+                    ? QString::asprintf("x%d  %+.3f", order[k].second, wIn[(std::size_t)order[k].second])
+                    : QString::asprintf("%s%d[%d]  %+.3f", src, srcL, order[k].second,
+                                        wIn[(std::size_t)order[k].second]);
+                m_sel3DIn->addItem(row);
+            }
+            if (order.size() > kCap)
+                m_sel3DIn->addItem(QString::asprintf("+%llu more", (unsigned long long)(order.size() - kCap)));
+        } else {
+            m_sel3DIn->addItem(QStringLiteral("-"));
+        }
+        // Outgoing weight layer of column c is c itself (col c -> c+1).
+        if (c > 0 && (std::size_t)c < st.weights.size()) {
+            const std::size_t lo = (std::size_t)c;
+            std::vector<std::pair<double, int>> order;
+            if (lo < st.weights.size()) {
+                for (std::size_t j = 0; j < st.weights[lo].size(); ++j) {
+                    const auto& w = st.weights[lo][j];
+                    if ((std::size_t)i < w.size()) order.emplace_back(std::abs(w[(std::size_t)i]), (int)j);
+                }
+            }
+            std::sort(order.begin(), order.end(),
+                      [](const auto& x, const auto& y) { return x.first > y.first; });
+            const bool outIsLast = (lo + 1 == st.weights.size());
+            for (std::size_t k = 0; k < order.size() && k < kCap; ++k) {
+                const double w = st.weights[lo][(std::size_t)order[k].second][(std::size_t)i];
+                QString row = outIsLast
+                    ? QString::asprintf("y%d  %+.3f", order[k].second, w)
+                    : QString::asprintf("H%llu[%d]  %+.3f", (unsigned long long)(c + 1), order[k].second, w);
+                m_sel3DOut->addItem(row);
+            }
+            if (order.size() > kCap)
+                m_sel3DOut->addItem(QString::asprintf("+%llu more", (unsigned long long)(order.size() - kCap)));
+            if (order.empty()) m_sel3DOut->addItem(QStringLiteral("-"));
+        } else if (c == 0) {
+            // Input neuron: fan-out into H1 (or output if no hidden layers).
+            if (!st.weights.empty()) {
+                std::vector<std::pair<double, int>> order;
+                for (std::size_t j = 0; j < st.weights[0].size(); ++j) {
+                    const auto& w = st.weights[0][j];
+                    if ((std::size_t)i < w.size()) order.emplace_back(std::abs(w[(std::size_t)i]), (int)j);
+                }
+                std::sort(order.begin(), order.end(),
+                          [](const auto& x, const auto& y) { return x.first > y.first; });
+                const bool single = (st.weights.size() == 1);
+                for (std::size_t k = 0; k < order.size() && k < kCap; ++k) {
+                    const double w = st.weights[0][(std::size_t)order[k].second][(std::size_t)i];
+                    QString row = single
+                        ? QString::asprintf("y%d  %+.3f", order[k].second, w)
+                        : QString::asprintf("H1[%d]  %+.3f", order[k].second, w);
+                    m_sel3DOut->addItem(row);
+                }
+                if (order.size() > kCap)
+                    m_sel3DOut->addItem(QString::asprintf("+%llu more", (unsigned long long)(order.size() - kCap)));
+                if (order.empty()) m_sel3DOut->addItem(QStringLiteral("-"));
+            } else {
+                m_sel3DOut->addItem(QStringLiteral("-"));
+            }
+        } else {
+            m_sel3DOut->addItem(QStringLiteral("-"));
+        }
+    }
     // Render the selected snapshot into Network + Boundary + info panels.
     void renderVizState() {
         int idx = selectedVizIdx();
@@ -3639,18 +4006,28 @@ private:
             }
             m_whatChangedLbl->setText(wc);
         }
-        // --- network (§2-§5, §13) ---
+        // --- network: forward sweep, then a backward sweep (amber, scaled by
+        // the real loss drop) sharing one 2L-tick cycle ---
         int nLayers = (int)st.weights.size();
-        int phase = -1;
+        int phase = -1, backPhase = -1;
+        float backInt = 0.0f;
         if (m_netLiveMode && nLayers > 0) {
-            if (g_bridge.isTraining || m_playing) phase = (m_fwdTick / 3) % nLayers;
-            else phase = nLayers - 1; // paused live: show full path glow on output
+            if (g_bridge.isTraining || m_playing) {
+                const int cyc = (m_fwdTick / 3) % (2 * nLayers);
+                if (cyc < nLayers) {
+                    phase = cyc;
+                } else {
+                    backPhase = 2 * nLayers - 1 - cyc;
+                    backInt = std::max(0.0f, std::min(1.0f, (float)lossDrop * 8.0f));
+                    if (backInt < 0.15f) backInt = 0.15f; // faint even when flat
+                }
+            } else phase = nLayers - 1; // paused live: show full path glow on output
         }
         std::vector<std::tuple<int,int,int>> hot;
         for (const auto& d : top) hot.emplace_back(d.l, d.a, d.b);
-        QString tag = QString::asprintf("%s — Ep %d — %s",
+        QString tag = QString::asprintf("%s — Ep %d — %s — %s params",
             m_netLiveMode ? "LIVE" : "FINAL", st.epoch,
-            describeNetFromViz(st).c_str());
+            describeNetFromViz(st).c_str(), fmtCount(countParams3D(st)).toLatin1().constData());
         // Avoid repaints when nothing changed (except forward animation).
         if (idx != m_cVizIdx || phase != m_cFwdPhase) {
             m_cVizIdx = idx;
@@ -3660,6 +4037,19 @@ private:
         } else if (m_netview) {
             // Still push phase for animation smoothness.
             m_netview->setSnapshot(st, probe, tag, phase, m_netLiveMode, hot);
+        }
+        // 3D viewer shares the same snapshot timeline (sweep/mode/hot/tag).
+        if (m_net3d) {
+            m_net3d->setSnapshot(toSnap3D(st, probe), phase, m_netLiveMode, hot, tag,
+                                 backPhase, backInt);
+            updateEdgeCount();
+        }
+        // Keep the inspect panel live while scrubbing (values follow epoch).
+        if (m_selCol3D >= 0 && idx != m_cSelIdx) {
+            m_cSelIdx = idx;
+            populateSel3DPanel(m_selCol3D, m_selIdx3D);
+        } else if (m_selCol3D < 0) {
+            m_cSelIdx = -2;
         }
         // --- boundary (§8): recompute grid from snapshot when 2D ---
         if (st.inDim == 2 && !probe.empty()) {
@@ -3772,6 +4162,10 @@ private:
         m_viz.clear();
         m_playIdx = -1;
         m_playing = false;
+        m_selCol3D = -1;
+        m_selIdx3D = -1;
+        m_cSelIdx = -2;
+        if (m_sel3DPanel) m_sel3DPanel->setVisible(false);
         if (m_playTimer && m_playTimer->isActive()) m_playTimer->stop();
         m_cVizIdx = -2; m_cFwdPhase = -2; m_cBndIdx = (std::size_t)-1;
         m_fwdTick = 0;
@@ -4223,6 +4617,7 @@ private:
             // configChanged() repaints a skeleton preview; restore the loaded
             // net on top since its weights are worth inspecting as-is.
             m_netview->setNet(shown, Vector{}, tag);
+            if (m_net3d) m_net3d->setSnapshot(snap3DFromNet(net, Vector{}, 0), -1, false, {});
             m_shownNetFp = archSummary() + "|" + m_previewFp + "|loaded";
             std::lock_guard<std::mutex> lock(g_bridge.mtx);
             g_bridge.summary = "Model loaded (" + describeNet(net) + ") — pick a matching dataset, then train or inspect Network.";

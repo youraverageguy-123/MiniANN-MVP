@@ -33,8 +33,9 @@ if ($gppVer -match "ucrt") {
 
 $INCL = "-Iinclude"
 $FLAGS = @("-std=c++17", "-O2", "-Wall", "-Wextra", "-Wpedantic", "-static-libstdc++", "-static-libgcc", "-Wl,-Bstatic", "-lwinpthread", "-Wl,-Bdynamic")
-$QTINC = @("-IC:/msys64/ucrt64/include/qt6", "-IC:/msys64/ucrt64/include/qt6/QtWidgets", "-IC:/msys64/ucrt64/include/qt6/QtGui", "-IC:/msys64/ucrt64/include/qt6/QtCore", "-DQT_WIDGETS_LIB", "-DQT_GUI_LIB", "-DQT_CORE_LIB")
-$QTLIBS = @("-mwindows", "-LC:/msys64/ucrt64/lib", "-lQt6Widgets", "-lQt6Gui", "-lQt6Core")
+$QTINC = @("-IC:/msys64/ucrt64/include/qt6", "-IC:/msys64/ucrt64/include/qt6/QtWidgets", "-IC:/msys64/ucrt64/include/qt6/QtGui", "-IC:/msys64/ucrt64/include/qt6/QtCore", "-IC:/msys64/ucrt64/include/qt6/QtOpenGLWidgets", "-IC:/msys64/ucrt64/include/qt6/QtOpenGL", "-DQT_WIDGETS_LIB", "-DQT_GUI_LIB", "-DQT_CORE_LIB")
+$QTLIBS = @("-mwindows", "-LC:/msys64/ucrt64/lib", "-lQt6Widgets", "-lQt6Gui", "-lQt6Core", "-lQt6OpenGLWidgets", "-lQt6OpenGL", "-lopengl32")
+$QTCLIBS = @("-LC:/msys64/ucrt64/lib", "-lQt6Gui", "-lQt6Core", "-lopengl32")
 
 if (-not (Test-Path "obj")) { New-Item -ItemType Directory "obj" | Out-Null }
 
@@ -95,8 +96,13 @@ function Build-Target($name, $srcPath) {
 
 if ($Target -eq "gui" -or $Target -eq "all") {
     Stop-Process -Name "gui_qt" -Force -ErrorAction SilentlyContinue
-    Write-Host "[build] Building gui_qt.exe (Qt Widgets)..." -ForegroundColor Cyan
-    & g++ $FLAGS $INCL $QTINC $LIB demos/gui_qt.cpp $QTLIBS -o gui_qt.exe
+    if (-not (Test-Path "obj3d")) { New-Item -ItemType Directory "obj3d" | Out-Null }
+    Write-Host "[build] Compiling 3D network viewer..." -ForegroundColor Cyan
+    & g++ $FLAGS $INCL $QTINC -c demos/network3d/network3d_widget.cpp -o obj3d/network3d_widget.o
+    if ($LASTEXITCODE -ne 0) { throw "Failed to compile network3d_widget.cpp" }
+
+    Write-Host "[build] Building gui_qt.exe (Qt Widgets + 3D viewer)..." -ForegroundColor Cyan
+    & g++ $FLAGS $INCL $QTINC $LIB obj3d/network3d_widget.o demos/gui_qt.cpp $QTLIBS -o gui_qt.exe
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[WARN] gui_qt.exe build failed. Ensure window is closed." -ForegroundColor Yellow
     } else {
@@ -121,6 +127,13 @@ if ($Target -eq "all" -or $Target -eq "tests") {
     Build-Target "test_correctness" "tests/test_correctness.cpp"
     Build-Target "test_callbacks" "tests/test_callbacks.cpp"
     Build-Target "test_patterns" "tests/test_patterns.cpp"
+    
+    # test_viz3d_math requires Qt and OpenGL
+    Write-Host "[build] Linking test_viz3d_math.exe..." -ForegroundColor Cyan
+    & g++ $FLAGS $INCL $QTINC $LIB tests/test_viz3d_math.cpp $QTCLIBS -o test_viz3d_math.exe
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "[build] OK: test_viz3d_math.exe" -ForegroundColor Green
+    }
 }
 
 Write-Host "`n====================================" -ForegroundColor Green

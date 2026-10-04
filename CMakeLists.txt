@@ -70,6 +70,11 @@ add_executable(test_patterns tests/test_patterns.cpp)
 target_link_libraries(test_patterns miniann)
 add_executable(test_callbacks tests/test_callbacks.cpp)
 target_link_libraries(test_callbacks miniann)
+find_package(Qt6 QUIET COMPONENTS Gui Core)
+if(Qt6Gui_FOUND)
+  add_executable(test_viz3d_math tests/test_viz3d_math.cpp)
+  target_link_libraries(test_viz3d_math miniann Qt6::Gui Qt6::Core)
+endif()
 
 add_test(NAME test_basic COMMAND test_basic)
 add_test(NAME test_choices COMMAND test_choices)
@@ -78,16 +83,20 @@ add_test(NAME test_training COMMAND test_training)
 add_test(NAME test_correctness COMMAND test_correctness)
 add_test(NAME test_patterns COMMAND test_patterns)
 add_test(NAME test_callbacks COMMAND test_callbacks WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+if(TARGET test_viz3d_math)
+  add_test(NAME test_viz3d_math COMMAND test_viz3d_math)
+endif()
 
 # Optional native GUI: only built when Qt6 Widgets are available, so plain
 # `cmake -B build && cmake --build build` keeps working without them.
 # (demos/gui_qt.cpp uses no Q_OBJECT, so no AUTOMOC handling is needed.)
-find_package(Qt6 QUIET COMPONENTS Widgets)
-if(Qt6Widgets_FOUND)
-  add_executable(gui_qt demos/gui_qt.cpp)
-  target_link_libraries(gui_qt miniann Qt6::Widgets)
+# The 3D viewer (demos/network3d) is also moc-free and needs Qt6 OpenGLWidgets.
+find_package(Qt6 QUIET COMPONENTS Widgets OpenGLWidgets Gui Core)
+if(Qt6Widgets_FOUND AND Qt6OpenGLWidgets_FOUND)
+  add_executable(gui_qt demos/gui_qt.cpp demos/network3d/network3d_widget.cpp)
+  target_link_libraries(gui_qt miniann Qt6::Widgets Qt6::OpenGLWidgets Qt6::OpenGL)
 else()
-  message(STATUS "Qt6 Widgets not found - skipping gui_qt (install Qt6 to enable the GUI)")
+  message(STATUS "Qt6 Widgets/OpenGLWidgets not found - skipping gui_qt (install Qt6 to enable the GUI)")
 endif()
 
 # ---- Library packaging: install + find_package support ----

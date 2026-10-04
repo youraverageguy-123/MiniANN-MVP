@@ -7,6 +7,7 @@ REM ========================================================
 echo [clean] Cleaning build artifacts...
 
 if exist obj rmdir /s /q obj
+if exist obj3d rmdir /s /q obj3d
 if exist build rmdir /s /q build
 
 del /q *.o 2>nul
