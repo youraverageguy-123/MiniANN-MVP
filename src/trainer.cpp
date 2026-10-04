@@ -93,6 +93,7 @@ TrainingHistory Trainer::fit(const Dataset& train, const Dataset* validation,
             logger_->log(LogLevel::Info, os.str());
         }
         if (cb) cb->onEpoch(epoch, hist);
+        if (cb) cb->onEpochNet(epoch, net_);
         if (cb && cb->shouldStop()) break; // UI STOP button: keep partial history
     }
     return hist;

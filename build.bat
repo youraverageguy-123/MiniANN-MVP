@@ -15,7 +15,12 @@ REM e.g. the Iris dataset. A UCRT g++ already first on PATH is left alone.
 for /d %%D in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_*") do (
     if exist "%%~D\mingw64\bin\g++.exe" set "PATH=%%~D\mingw64\bin;%PATH%"
 )
-g++ --version | findstr /i "ucrt" >nul && echo [toolchain] UCRT g++ selected || echo [toolchain] WARNING: no UCRT g++ found, using default g++ (Qt GUI may be unstable)
+g++ --version | findstr /i "ucrt" >nul && set UCRT_OK=1
+REM MSYS2's own g++ never mentions UCRT in --version, so also accept a
+REM ucrt64 toolchain directory on PATH (verified: its binaries link the
+REM api-ms-win-crt-* UCRT sets, not msvcrt.dll).
+where g++ 2>nul | findstr /i "ucrt64" >nul && set UCRT_OK=1
+if defined UCRT_OK (echo [toolchain] UCRT g++ selected) else echo [toolchain] WARNING: no UCRT g++ found, using default g++ (Qt GUI may be unstable)
 
 set INCL=-Iinclude
 set FLAGS=-std=c++17 -O2 -Wall -Wextra -Wpedantic -static-libstdc++ -static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic
@@ -27,7 +32,7 @@ set QTLIBS=-mwindows -LC:/msys64/ucrt64/lib -lQt6Widgets -lQt6Gui -lQt6Core
 if not exist obj mkdir obj
 
 echo Compiling MiniANN library (once, reused by all targets)...
-for %%f in (src\activation.cpp src\neuron.cpp src\layer.cpp src\network.cpp src\loss.cpp src\optimizer.cpp src\trainer.cpp src\dataset.cpp src\metrics.cpp src\logger.cpp src\serializer.cpp src\visualizer.cpp src\experiment.cpp src\callbacks.cpp) do (
+for %%f in (src\activation.cpp src\neuron.cpp src\layer.cpp src\network.cpp src\loss.cpp src\optimizer.cpp src\trainer.cpp src\dataset.cpp src\metrics.cpp src\logger.cpp src\serializer.cpp src\visualizer.cpp src\experiment.cpp src\normalize.cpp src\validate.cpp src\datasource.cpp src\callbacks.cpp) do (
     g++ %FLAGS% %INCL% -c %%f -o obj\%%~nf.o
     if errorlevel 1 exit /b 1
 )
@@ -41,54 +46,66 @@ if /i "%1"=="clean" (
 if /i "%1"=="demos" goto build_demos
 if /i "%1"=="tests" goto build_tests
 
-echo [1/12] Building xor_demo.exe...
+echo [1/14] Building xor_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\xor_demo.cpp -o xor_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [2/12] Building and_or_demo.exe...
+echo [2/14] Building and_or_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\and_or_demo.cpp -o and_or_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [3/12] Building iris_demo.exe...
+echo [3/14] Building iris_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\iris_demo.cpp -o iris_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [4/12] Building compare_demo.exe...
+echo [4/14] Building compare_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\compare_demo.cpp -o compare_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [5/12] Building playground.exe...
+echo [5/14] Building playground.exe...
 g++ %FLAGS% %INCL% %LIB% demos\playground.cpp -o playground.exe
 if errorlevel 1 exit /b 1
 
-echo [6/12] Building gradient_check.exe...
+echo [6/14] Building gradient_check.exe...
 g++ %FLAGS% %INCL% %LIB% tests\gradient_check.cpp -o gradient_check.exe
 if errorlevel 1 exit /b 1
 
-echo [7/12] Building test_basic.exe...
+echo [7/14] Building test_basic.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_basic.cpp -o test_basic.exe
 if errorlevel 1 exit /b 1
 
-echo [8/12] Building test_choices.exe...
+echo [8/14] Building test_choices.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_choices.cpp -o test_choices.exe
 if errorlevel 1 exit /b 1
 
-echo [9/12] Building test_training.exe...
+echo [9/14] Building test_training.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_training.cpp -o test_training.exe
 if errorlevel 1 exit /b 1
 
-echo [10/12] Building test_correctness.exe...
+echo [10/14] Building test_correctness.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_correctness.cpp -o test_correctness.exe
 if errorlevel 1 exit /b 1
 
-echo [11/12] Building test_callbacks.exe...
+echo [11/14] Building test_patterns.exe...
+g++ %FLAGS% %INCL% %LIB% tests\test_patterns.cpp -o test_patterns.exe
+if errorlevel 1 exit /b 1
+
+echo [12/14] Building test_callbacks.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_callbacks.cpp -o test_callbacks.exe
 if errorlevel 1 exit /b 1
 
-echo [12/12] Building early_stop_demo.exe...
+echo [13/14] Building early_stop_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\early_stop_demo.cpp -o early_stop_demo.exe
 if errorlevel 1 exit /b 1
 
+echo [14/14] Building gui_qt.exe (Qt Widgets)...
+g++ %FLAGS% %INCL% %QTINC% %LIB% demos\gui_qt.cpp %QTLIBS% -o gui_qt.exe
+if errorlevel 1 (
+    echo [WARN] gui_qt.exe skipped - install Qt6, or close the running
+    echo        gui_qt.exe window: a locked exe cannot be relinked.
+    echo        (Or build it alone later with: build.bat gui)
+    echo        Core library and console demos above are unaffected.
+)
 goto done
 
 :build_gui
@@ -101,6 +118,7 @@ if errorlevel 1 (
 echo [GUI] gui_qt.exe built successfully!
 exit /b 0
 
+goto done
 :done
 echo.
 echo ====================================

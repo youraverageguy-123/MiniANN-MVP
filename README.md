@@ -120,6 +120,8 @@ This builds:
 | `test_choices.exe` | `tests/test_choices.cpp` |
 | `gradient_check.exe` | `tests/gradient_check.cpp` |
 | `test_training.exe` | `tests/test_training.cpp` (XOR convergence, split determinism, Iris pipeline) |
+| `test_correctness.exe` | `tests/test_correctness.cpp` (activations incl. softmax, metrics, Xavier guards, optimizer resume) |
+| `test_patterns.exe` | `tests/test_patterns.cpp` (Strategy/Factory/Composite/Chain/Visitor unit checks) |
 | `and_or_demo.exe` | `demos/and_or_demo.cpp` |
 | `xor_demo.exe` | `demos/xor_demo.cpp` |
 | `iris_demo.exe` | `demos/iris_demo.cpp` |
@@ -292,15 +294,24 @@ tiny ≤8-sample datasets), and evaluates the held-out test set separately.
 Notes:
 
 - Needs Qt6 Widgets installed (`pacman -S mingw-w64-ucrt-x86_64-qt6-base`
-  on MSYS2 UCRT64); without it, step 10/10 of `build.bat` prints a warning
+  on MSYS2 UCRT64); without it, step 12/12 of `build.bat` prints a warning
   and everything else still builds. `build.bat` never launches the GUI by itself.
 - Native OS text rendering with automatic per-monitor DPI handling, so text
   stays sharp on scaled displays (125%/150%). F11 toggles maximize.
-- CSV controls appear when CSV is selected: target column (`auto` = last),
-  header yes/no. Non-numeric cells and bad columns report in the summary bar
+- CSV controls appear when CSV is selected: target column (`auto` detects the
+  label column from the header name or the value distribution, explicit
+  selection overrides it), header yes/no. The target column's distinct values
+  and range are shown so a wrong-column choice is visible; a constant target
+  is rejected outright (predicting a constant is trivially 100% and measures
+  nothing). Non-numeric cells and bad columns report in the summary bar
   instead of crashing. Multiclass CSV targets (integer labels 0..K-1) are
   auto one-hot encoded.
 - BCE with a multi-output network is rejected with an error for the same reason.
+- Object-oriented design map: activations, losses, optimizers, initializers,
+  normalizers, split orders, validators, dataset sources and target selectors
+  are all polymorphic hierarchies built through factories (`test_patterns.exe`
+  unit-checks every one); the 13-rule `ConfigValidator` composite owns config
+  checks; optimizers update neurons through the `INeuronVisitor` interface.
 - Not yet implemented: experiment save/compare files (§28–29 of the spec),
   activation-function plots, early stopping. The backend exposes everything
   needed (`TrainingHistory`, `TrainingCallback::shouldStop`), so these are

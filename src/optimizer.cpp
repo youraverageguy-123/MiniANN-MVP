@@ -6,15 +6,15 @@ namespace miniann {
 
 void SGD::step(NeuralNetwork& net, std::size_t batchSize) {
     if (batchSize == 0) batchSize = 1;
-    double scale = -lr_ / double(batchSize);
-    for (auto& layer : net.layers()) {
-        for (auto& n : layer.neurons()) {
-            Vector dW(n.gradWeights().size());
-            for (std::size_t i = 0; i < dW.size(); ++i)
-                dW[i] = scale * n.gradWeights()[i];
-            n.applyStep(dW, scale * n.gradBias());
-        }
-    }
+    scale_ = -lr_ / double(batchSize);
+    net.accept(*this); // traversal owned by the network (Visitor)
+}
+
+void SGD::visit(std::size_t, std::size_t, Neuron& n) {
+    Vector dW(n.gradWeights().size());
+    for (std::size_t i = 0; i < dW.size(); ++i)
+        dW[i] = scale_ * n.gradWeights()[i];
+    n.applyStep(dW, scale_ * n.gradBias());
 }
 
 Adam::Adam(double lr, double b1, double b2, double eps)
@@ -44,28 +44,29 @@ void Adam::step(NeuralNetwork& net, std::size_t batchSize) {
     }
     double b1t = 1.0 - std::pow(beta1_, double(t_));
     double b2t = 1.0 - std::pow(beta2_, double(t_));
-    for (std::size_t l = 0; l < layers.size(); ++l) {
-        auto& neurons = layers[l].neurons();
-        for (std::size_t j = 0; j < neurons.size(); ++j) {
-            auto& n = neurons[j];
-            Vector dW(n.weights().size());
-            for (std::size_t i = 0; i < dW.size(); ++i) {
-                double g = n.gradWeights()[i] / double(batchSize);
-                m_w_[l][j][i] = beta1_ * m_w_[l][j][i] + (1.0 - beta1_) * g;
-                v_w_[l][j][i] = beta2_ * v_w_[l][j][i] + (1.0 - beta2_) * g * g;
-                double mhat = m_w_[l][j][i] / b1t;
-                double vhat = v_w_[l][j][i] / b2t;
-                dW[i] = -lr_ * mhat / (std::sqrt(vhat) + eps_);
-            }
-            double gb = n.gradBias() / double(batchSize);
-            m_b_[l][j] = beta1_ * m_b_[l][j] + (1.0 - beta1_) * gb;
-            v_b_[l][j] = beta2_ * v_b_[l][j] + (1.0 - beta2_) * gb * gb;
-            double mhat_b = m_b_[l][j] / b1t;
-            double vhat_b = v_b_[l][j] / b2t;
-            double dB = -lr_ * mhat_b / (std::sqrt(vhat_b) + eps_);
-            n.applyStep(dW, dB);
-        }
+    bs_ = batchSize;
+    b1t_ = b1t;
+    b2t_ = b2t;
+    net.accept(*this);
+}
+
+void Adam::visit(std::size_t l, std::size_t j, Neuron& n) {
+    Vector dW(n.weights().size());
+    for (std::size_t i = 0; i < dW.size(); ++i) {
+        double g = n.gradWeights()[i] / double(bs_);
+        m_w_[l][j][i] = beta1_ * m_w_[l][j][i] + (1.0 - beta1_) * g;
+        v_w_[l][j][i] = beta2_ * v_w_[l][j][i] + (1.0 - beta2_) * g * g;
+        double mhat = m_w_[l][j][i] / b1t_;
+        double vhat = v_w_[l][j][i] / b2t_;
+        dW[i] = -lr_ * mhat / (std::sqrt(vhat) + eps_);
     }
+    double gb = n.gradBias() / double(bs_);
+    m_b_[l][j] = beta1_ * m_b_[l][j] + (1.0 - beta1_) * gb;
+    v_b_[l][j] = beta2_ * v_b_[l][j] + (1.0 - beta2_) * gb * gb;
+    double mhat_b = m_b_[l][j] / b1t_;
+    double vhat_b = v_b_[l][j] / b2t_;
+    double dB = -lr_ * mhat_b / (std::sqrt(vhat_b) + eps_);
+    n.applyStep(dW, dB);
 }
 
 Momentum::Momentum(double lr, double mu) : lr_(lr), mu_(mu) {}
@@ -114,21 +115,20 @@ void Momentum::step(NeuralNetwork& net, std::size_t batchSize) {
                 v_w_[l][j].assign(neurons[j].weights().size(), 0.0);
         }
     }
-    for (std::size_t l = 0; l < layers.size(); ++l) {
-        auto& neurons = layers[l].neurons();
-        for (std::size_t j = 0; j < neurons.size(); ++j) {
-            auto& n = neurons[j];
-            Vector dW(n.weights().size());
-            for (std::size_t i = 0; i < dW.size(); ++i) {
-                double g = n.gradWeights()[i] / double(batchSize);
-                v_w_[l][j][i] = mu_ * v_w_[l][j][i] - lr_ * g;
-                dW[i] = v_w_[l][j][i];
-            }
-            double gb = n.gradBias() / double(batchSize);
-            v_b_[l][j] = mu_ * v_b_[l][j] - lr_ * gb;
-            n.applyStep(dW, v_b_[l][j]);
-        }
+    bs_ = batchSize;
+    net.accept(*this);
+}
+
+void Momentum::visit(std::size_t l, std::size_t j, Neuron& n) {
+    Vector dW(n.weights().size());
+    for (std::size_t i = 0; i < dW.size(); ++i) {
+        double g = n.gradWeights()[i] / double(bs_);
+        v_w_[l][j][i] = mu_ * v_w_[l][j][i] - lr_ * g;
+        dW[i] = v_w_[l][j][i];
     }
+    double gb = n.gradBias() / double(bs_);
+    v_b_[l][j] = mu_ * v_b_[l][j] - lr_ * gb;
+    n.applyStep(dW, v_b_[l][j]);
 }
 
 std::unique_ptr<IOptimizer> OptimizerFactory::create(const std::string& name, double lr) {

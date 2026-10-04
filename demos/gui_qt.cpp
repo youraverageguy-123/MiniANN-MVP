@@ -50,8 +50,9 @@
 #include <QFile>
 #include <QDir>
 #include <QTextStream>
-#include <QFileInfo>
 #include <QDesktopServices>
+#include <QList>
+#include <QPointer>
 
 #include "miniann/experiment.hpp"
 #include "miniann/serializer.hpp"
@@ -70,6 +71,7 @@
 #include <fstream>
 #include <sstream>
 #include <cstdio>
+#include <tuple>
 
 using namespace miniann;
 
@@ -103,16 +105,42 @@ static ActiveActivation actFromName(const std::string& n) {
 // ---------------------------------------------------------------- live bridge
 // Streaming sink for the worker thread + store for completed-run artifacts.
 // The GUI thread only ever reads under mtx (or atomics); the worker only
-// writes under mtx. Culturear curves stream per epoch; the heavy objects
+// writes under mtx. Curves stream per epoch; the heavy objects
 // (network, datasets) are stored once at the end of a run.
+//
+// Live-visualization snapshots (§19/§20 of the visualization spec):
+// lightweight weight snapshots are captured every `vizInterval` epochs while
+// training runs (full speed by default; an optional pacing delay slows the
+// worker thread so the eye can follow). The UI animates and scrubs through
+// those snapshots (Network + Boundary share one timeline).
+struct VisualizationState {
+    int epoch = 0;
+    float trainLoss = 0, trainAcc = 0, valLoss = 0, valAcc = 0;
+    bool hasVal = false;
+    std::size_t inDim = 0;
+    // weights[l][neuron][input], biases[l][neuron], one act name per layer
+    // (hidden layers + output layer, in order).
+    std::vector<std::vector<std::vector<double>>> weights;
+    std::vector<std::vector<double>> biases;
+    std::vector<std::string> layerActs;
+};
+
 struct LiveGuiBridge : public TrainingCallback {
     std::mutex mtx;
     std::vector<float> trainLoss, valLoss, trainAcc, valAcc;
     int currentEpoch = 0;
     std::atomic<bool> isTraining{false};
     std::atomic<bool> stopRequested{false};
-    std::atomic<int> epochDelayMs{0};
+    // Visualization interval in epochs (§1): a snapshot is captured every N
+    // epochs for animation/playback. Training otherwise runs at full speed
+    // unless the user adds a pacing delay (slow motion) below.
+    std::atomic<int> vizInterval{10};
+    // Pacing delay in ms per epoch (slow motion so the eye can follow).
+    // 0 = full speed. Applied in the worker thread; snapshots are unaffected.
+    std::atomic<int> paceDelayMs{0};
     std::string summary = "Ready to train.";
+    // -- live snapshots (shared Network + Boundary timeline, §10) --
+    std::vector<VisualizationState> vizStates;
     // -- completed-run snapshot --
     unsigned runSeq = 0;
     bool hasResult = false;
@@ -122,19 +150,19 @@ struct LiveGuiBridge : public TrainingCallback {
     double lastTrainLoss = 0, lastTrainAcc = 0, lastValLoss = 0, lastValAcc = 0;
     double lastTestLoss = 0, lastTestAcc = 0, lastSeconds = 0;
     int lastEpochsRun = 0, lastEpochsTarget = 0;
-    bool lastHasVal = false, lastTiny = false;
-    std::string lastWarning, lastArch, lastOptDesc, lastDsDesc, lastLoss;
+    bool lastHasVal = false, lastHasTest = false, lastTiny = false;
+    std::string lastWarning, lastArch, lastOptDesc, lastDsDesc, lastLoss, lastSplitTxt;
     std::string lastBatchTxt;
     int lastSeed = 42;
     std::vector<std::vector<std::size_t>> lastConfusion;
     std::size_t lastNumClasses = 0;
-    bool lastHasConfusion = false;
+    bool lastHasConfusion = false, lastConfusionOnTrain = false;
     std::shared_ptr<NeuralNetwork> lastNet;
     Dataset lastTrain, lastTest;
     std::size_t lastInDim = 0, lastOutDim = 0;
 
     void onEpoch(int epoch, const TrainingHistory& hist) override {
-        int delay = epochDelayMs.load();
+        int delay = paceDelayMs.load();
         if (delay > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(delay));
         }
@@ -144,6 +172,43 @@ struct LiveGuiBridge : public TrainingCallback {
         if (!hist.validationLoss.empty())  valLoss.push_back((float)hist.validationLoss.back());
         if (!hist.trainAcc.empty())        trainAcc.push_back((float)hist.trainAcc.back());
         if (!hist.validationAcc.empty())   valAcc.push_back((float)hist.validationAcc.back());
+    }
+    // Called by Trainer right after onEpoch with the live network. Copies
+    // weights only on snapshot epochs so training never blocks on rendering.
+    void onEpochNet(int epoch, const NeuralNetwork& net) override {
+        int interval = vizInterval.load();
+        if (interval < 1) interval = 1;
+        if (epoch != 1 && (epoch % interval) != 0) return;
+        VisualizationState st;
+        st.epoch = epoch;
+        {
+            // Metrics for this epoch are already streamed; copy latest.
+            // (Lock briefly; vectors only append.)
+            std::lock_guard<std::mutex> lock(mtx);
+            if (!trainLoss.empty()) st.trainLoss = trainLoss.back();
+            if (!trainAcc.empty())  st.trainAcc = trainAcc.back();
+            if (!valLoss.empty())   { st.valLoss = valLoss.back(); st.hasVal = true; }
+            if (!valAcc.empty())    { st.valAcc = valAcc.back();   st.hasVal = true; }
+        }
+        if (net.numLayers() == 0) return;
+        st.inDim = net.layers()[0].inputSize();
+        for (const auto& layer : net.layers()) {
+            std::vector<std::vector<double>> w;
+            std::vector<double> b;
+            std::string an = "?";
+            if (!layer.neurons().empty()) an = layer.neurons()[0].activation().name();
+            for (const auto& n : layer.neurons()) {
+                w.push_back(n.weights());
+                b.push_back(n.bias());
+            }
+            st.weights.push_back(std::move(w));
+            st.biases.push_back(std::move(b));
+            st.layerActs.push_back(an);
+        }
+        std::lock_guard<std::mutex> lock(mtx);
+        // Bound memory (§18): snapshots are tiny (weights only), but cap at
+        // 2000 entries so huge epoch counts can't grow without bound.
+        if (vizStates.size() < 2000) vizStates.push_back(std::move(st));
     }
     bool shouldStop() const override { return stopRequested.load(); }
 
@@ -159,6 +224,7 @@ struct LiveGuiBridge : public TrainingCallback {
         lastError.clear();
         lastCompleted = false;
         lastStopped = false;
+        vizStates.clear();
     }
 };
 
@@ -181,6 +247,7 @@ public:
         m_hasVal = hasVal && !m_val.empty();
         m_liveEpoch = liveEpoch;
         update();
+        pushMirrors();
     }
 
     void copyFrom(const PlotWidget& o) {
@@ -201,16 +268,32 @@ public:
         }
         auto* dlg = new QDialog(window());
         m_expandedDlg = dlg;
-        dlg->setWindowTitle(m_accuracy ? QStringLiteral("Accuracy curves") : QStringLiteral("Loss curves"));
+        dlg->setWindowTitle((m_accuracy ? QStringLiteral("Accuracy (live)") : QStringLiteral("Loss curves (live)")));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(800, 560);
         auto* lay = new QVBoxLayout(dlg);
         lay->setContentsMargins(6, 6, 6, 6);
         auto* big = new PlotWidget;
         big->copyFrom(*this);
+        m_mirrors.push_back(big);
         lay->addWidget(big);
         dlg->show();
     }
+
+private:
+    // Enlarged popups mirror this widget: every state change is pushed to
+    // open popups (transitively), so a popup can never show a stale run or
+    // a stale architecture. QPointer auto-nulls on close; dead ones pruned.
+    void pushMirrors() {
+        for (int i = m_mirrors.size() - 1; i >= 0; --i) {
+            if (m_mirrors[i].isNull()) m_mirrors.removeAt(i);
+            else {
+                m_mirrors[i]->copyFrom(*this);
+                m_mirrors[i]->pushMirrors();
+            }
+        }
+    }
+    QList<QPointer<PlotWidget>> m_mirrors;
 
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -380,12 +463,14 @@ public:
         m_x0 = x0; m_x1 = x1; m_y0 = y0; m_y1 = y1;
         m_ready = ready;
         update();
+        pushMirrors();
     }
 
     // Live predictor for hover tooltips (trained net, may be null).
     void setPredictor(std::shared_ptr<NeuralNetwork> net, double thresh = 0.5) {
         m_net = std::move(net);
         m_thresh = thresh;
+        pushMirrors();
     }
 
     void copyFrom(const BoundaryWidget& o) {
@@ -523,18 +608,30 @@ protected:
         }
         auto* dlg = new QDialog(window());
         m_expandedDlg = dlg;
-        dlg->setWindowTitle(QStringLiteral("Decision boundary"));
+        dlg->setWindowTitle(QStringLiteral("Decision boundary (live)"));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(800, 620);
         auto* lay = new QVBoxLayout(dlg);
         lay->setContentsMargins(6, 6, 6, 6);
         auto* big = new BoundaryWidget;
         big->copyFrom(*this);
+        m_mirrors.push_back(big);
         lay->addWidget(big);
         dlg->show();
     }
 
 private:
+    // See PlotWidget: enlarged popups mirror this widget live.
+    void pushMirrors() {
+        for (int i = m_mirrors.size() - 1; i >= 0; --i) {
+            if (m_mirrors[i].isNull()) m_mirrors.removeAt(i);
+            else {
+                m_mirrors[i]->copyFrom(*this);
+                m_mirrors[i]->pushMirrors();
+            }
+        }
+    }
+    QList<QPointer<BoundaryWidget>> m_mirrors;
     QImage m_grid;
     std::vector<QPointF> m_trainPts, m_testPts;
     std::vector<int> m_trainCls, m_testCls;
@@ -553,6 +650,50 @@ struct ArchDesc {
     std::vector<QString> names; // per layer: "Input", "Hidden 1 (ReLU)", ...
 };
 
+// Live-visualization helpers (§2-§4): forward a snapshot's weights on a probe
+// input so Network/Boundary/output-bars share one timeline without a net.
+static double vizActivate(const std::string& actName, double z) {
+    try {
+        auto act = ActivationFactory::create(actName);
+        return act->activate(z);
+    } catch (...) {
+        return z; // unknown "?" activation: linear fallback
+    }
+}
+static QString vizShortAct(const std::string& n) {
+    if (n == "sigmoid") return QStringLiteral("Sig");
+    if (n == "tanh") return QStringLiteral("Tanh");
+    if (n == "relu") return QStringLiteral("ReLU");
+    if (n == "leaky_relu") return QStringLiteral("L-ReLU");
+    if (n == "swish") return QStringLiteral("Swish");
+    if (n == "linear") return QStringLiteral("Lin");
+    return QStringLiteral("?");
+}
+// activations[0] = input, activations[l+1] = layer-l output.
+static std::vector<std::vector<double>> forwardViz(const VisualizationState& st,
+                                                    const Vector& input) {
+    std::vector<std::vector<double>> acts;
+    acts.push_back(input);
+    Vector cur = input;
+    for (std::size_t l = 0; l < st.weights.size(); ++l) {
+        std::size_t n = st.biases[l].size();
+        Vector nxt(n, 0.0);
+        std::string an = (l < st.layerActs.size()) ? st.layerActs[l] : "linear";
+        for (std::size_t j = 0; j < n; ++j) {
+            double z = (j < st.biases[l].size()) ? st.biases[l][j] : 0.0;
+            if (l < st.weights.size() && j < st.weights[l].size()) {
+                const auto& w = st.weights[l][j];
+                for (std::size_t i = 0; i < cur.size() && i < w.size(); ++i)
+                    z += cur[i] * w[i];
+            }
+            nxt[j] = vizActivate(an, z);
+        }
+        acts.push_back(nxt);
+        cur = nxt;
+    }
+    return acts;
+}
+
 class NetWidget : public QWidget {
 public:
     explicit NetWidget(QWidget* parent = nullptr) : QWidget(parent) {
@@ -563,8 +704,10 @@ public:
     void setArch(ArchDesc a) {
         m_arch = std::move(a);
         m_net.reset();
+        m_hasViz = false;
         m_tag = QStringLiteral("PREVIEW — edit config, then START TRAINING");
         update();
+        pushMirrors();
     }
     // Trained net: nodes show live firing on the probe input.
     void setNet(std::shared_ptr<NeuralNetwork> net, Vector probe, QString tag) {
@@ -572,14 +715,51 @@ public:
         m_probe = std::move(probe);
         m_tag = std::move(tag);
         m_arch.valid = false;
+        m_hasViz = false;
         update();
+        pushMirrors();
+    }
+    // Live snapshot (§2-§5, §10, §13): weights from a training epoch.
+    // fwdPhase = weight-layer index to highlight (-1 = none);
+    // liveMode false = FINAL (clean, no animation); hot = largest-update edges.
+    void setSnapshot(const VisualizationState& st, Vector probe, QString tag,
+                     int fwdPhase, bool liveMode,
+                     std::vector<std::tuple<int,int,int>> hot = {}) {
+        m_viz = st;
+        m_hasViz = true;
+        m_net.reset();
+        m_probe = std::move(probe);
+        m_tag = std::move(tag);
+        m_arch.valid = false;
+        m_fwdPhase = fwdPhase;
+        m_liveMode = liveMode;
+        m_hot = std::move(hot);
+        update();
+        pushMirrors();
     }
     void copyFrom(const NetWidget& o) {
         m_arch = o.m_arch;
         m_net = o.m_net;
         m_probe = o.m_probe;
         m_tag = o.m_tag;
+        m_hasViz = o.m_hasViz;
+        m_viz = o.m_viz;
+        m_fwdPhase = o.m_fwdPhase;
+        m_liveMode = o.m_liveMode;
+        m_hot = o.m_hot;
         update();
+    }
+
+    // Enlarged popups mirror this widget (see PlotWidget): every state
+    // change is pushed out so a popup can never show a stale architecture.
+    void pushMirrors() {
+        for (int i = m_mirrors.size() - 1; i >= 0; --i) {
+            if (m_mirrors[i].isNull()) m_mirrors.removeAt(i);
+            else {
+                m_mirrors[i]->copyFrom(*this);
+                m_mirrors[i]->pushMirrors();
+            }
+        }
     }
 
 protected:
@@ -612,10 +792,19 @@ protected:
         p.setBrush(Qt::NoBrush);
         p.drawRect(area.adjusted(0, 0, -1, -1));
 
-        // Resolve layers to draw: trained net wins, else skeleton.
+        // Resolve layers to draw: live snapshot wins, then trained net, else skeleton.
         struct Col { QString name; std::size_t n; };
         std::vector<Col> cols;
-        if (m_net && m_net->numLayers() > 0) {
+        if (m_hasViz && !m_viz.weights.empty()) {
+            cols.push_back({QStringLiteral("Input"), m_viz.inDim});
+            for (std::size_t l = 0; l < m_viz.weights.size(); ++l) {
+                QString an = (l < m_viz.layerActs.size())
+                    ? vizShortAct(m_viz.layerActs[l]) : QStringLiteral("?");
+                bool last = (l + 1 == m_viz.weights.size());
+                std::size_t n = (l < m_viz.biases.size()) ? m_viz.biases[l].size() : 0;
+                cols.push_back({(last ? QStringLiteral("Output·") : QStringLiteral("H%1·").arg(l + 1)) + an, n});
+            }
+        } else if (m_net && m_net->numLayers() > 0) {
             cols.push_back({QStringLiteral("Input"), m_net->layers()[0].inputSize()});
             for (std::size_t l = 0; l < m_net->numLayers(); ++l) {
                 const auto& layer = m_net->layers()[l];
@@ -636,9 +825,11 @@ protected:
             return;
         }
 
-        // Firing values for the probe (trained net only).
+        // Firing values for the probe (§2: brightness = activation magnitude).
         std::vector<std::vector<double>> fire;
-        if (m_net && !m_probe.empty()) {
+        if (m_hasViz && !m_probe.empty()) {
+            fire = forwardViz(m_viz, m_probe);
+        } else if (m_net && !m_probe.empty()) {
             Vector cur = m_probe;
             fire.push_back(cur);
             for (auto& layer : m_net->layers()) {
@@ -667,13 +858,28 @@ protected:
             }
         }
 
-        // Edges: pure black-bluish visual (luminous cyan/blue lines scaled by weight magnitude)
+        // Edges (§4): thickness/brightness = |weight|; cyan/blue = positive,
+        // orange = negative; yellow = largest recent update (§12); the
+        // forward-pass layer (§3) glows in LIVE mode.
+        auto isHot = [&](std::size_t wl, std::size_t a, std::size_t b) {
+            for (const auto& t : m_hot)
+                if (std::get<0>(t) == (int)wl && std::get<1>(t) == (int)a && std::get<2>(t) == (int)b)
+                    return true;
+            return false;
+        };
         for (std::size_t l = 1; l < L; ++l) {
+            bool fwdActive = m_liveMode && m_hasViz && (int)(l - 1) == m_fwdPhase;
             for (std::size_t a_idx = 0; a_idx < shown[l - 1]; ++a_idx) {
                 for (std::size_t b_idx = 0; b_idx < shown[l]; ++b_idx) {
                     double w = 0.0;
                     bool hasW = false;
-                    if (m_net && (l - 1) < m_net->numLayers()) {
+                    if (m_hasViz && (l - 1) < m_viz.weights.size()) {
+                        const auto& W = m_viz.weights[l - 1];
+                        if (b_idx < W.size() && a_idx < W[b_idx].size()) {
+                            w = W[b_idx][a_idx];
+                            hasW = true;
+                        }
+                    } else if (m_net && (l - 1) < m_net->numLayers()) {
                         const auto& lyr = m_net->layers()[l - 1];
                         if (b_idx < lyr.size()) {
                             const auto& ws = lyr.neurons()[b_idx].weights();
@@ -688,7 +894,20 @@ protected:
                         double absW = std::abs(w);
                         qreal penW = std::clamp(1.0 + absW * 0.4, 1.0, 2.4);
                         int alpha = std::clamp(static_cast<int>(30 + absW * 55), 30, 180);
-                        p.setPen(QPen(QColor(0x5A, 0xA9, 0xE6, alpha), penW));
+                        QColor col = (w >= 0) ? QColor(0x5A, 0xA9, 0xE6, alpha)
+                                              : QColor(0xF5, 0x9E, 0x0B, alpha);
+                        if (m_hasViz && isHot(l - 1, a_idx, b_idx)) {
+                            col = QColor(0xFA, 0xCC, 0x15, 255);
+                            penW = std::min<qreal>(penW + 0.8, 3.2);
+                        } else if (fwdActive) {
+                            alpha = 255;
+                            col = (w >= 0) ? QColor(0xA9, 0xD6, 0xFF, alpha)
+                                           : QColor(0xFD, 0xD0, 0x6E, alpha);
+                            penW = std::min<qreal>(penW + 0.8, 3.2);
+                        } else if (!m_liveMode) {
+                            alpha = std::min(alpha, 150); // FINAL: cleaner, calmer
+                        }
+                        p.setPen(QPen(col, penW));
                     } else {
                         p.setPen(QPen(QColor(0x5A, 0xA9, 0xE6, 30), 1));
                     }
@@ -697,8 +916,10 @@ protected:
             }
         }
 
-        // Nodes: classic luminous blue firing on deep navy/black base
+        // Nodes (§2): dim = low activation, bright = high activation.
+        // In LIVE mode the active forward-pass column glows (§3).
         for (std::size_t l = 0; l < L; ++l) {
+            bool colActive = m_liveMode && m_hasViz && (int)l == m_fwdPhase + 1;
             for (std::size_t i = 0; i < shown[l]; ++i) {
                 double f = -1.0;
                 if (l < fire.size() && i < fire[l].size()) {
@@ -707,8 +928,14 @@ protected:
                 }
                 QColor fill = (f < 0.0) ? QColor(0x1B, 0x1E, 0x2B)
                     : QColor::fromHslF(0.58, 0.75, 0.12 + 0.35 * std::max(0.0, std::min(1.0, f)));
+                if (colActive && f >= 0.0) {
+                    p.setBrush(QColor(0xA9, 0xD6, 0xFF, 70));
+                    p.setPen(Qt::NoPen);
+                    p.drawEllipse(pts[l][i], 13, 13);
+                }
                 p.setBrush(fill);
-                p.setPen(QPen(QColor(0x7F, 0xB3, 0xE8), 1.5));
+                p.setPen(QPen(colActive ? QColor(0xE8, 0xF2, 0xFF) : QColor(0x7F, 0xB3, 0xE8),
+                              colActive ? 2.2 : 1.5));
                 p.drawEllipse(pts[l][i], 9, 9);
             }
             if (shown[l] < cols[l].n) {
@@ -737,7 +964,7 @@ protected:
     }
 
     void mouseMoveEvent(QMouseEvent* e) override {
-        if (!m_net || m_hit.empty()) {
+        if ((!m_net && !m_hasViz) || m_hit.empty()) {
             QToolTip::hideText();
             return;
         }
@@ -750,7 +977,19 @@ protected:
                         tip = QString::asprintf("Input Node #%llu\nValue: %.4f", (unsigned long long)i + 1, v);
                     } else {
                         std::size_t li = l - 1;
-                        if (li < m_net->numLayers() && i < m_net->layers()[li].size()) {
+                        if (m_hasViz && li < m_viz.weights.size() && i < m_viz.weights[li].size()) {
+                            const auto& w = m_viz.weights[li][i];
+                            QString ws;
+                            for (std::size_t k = 0; k < std::min<std::size_t>(w.size(), 6); ++k)
+                                ws += QString::asprintf("%s%.3f", k ? ", " : "", w[k]);
+                            if (w.size() > 6) ws += QStringLiteral(", …");
+                            double b = (li < m_viz.biases.size() && i < m_viz.biases[li].size())
+                                ? m_viz.biases[li][i] : 0.0;
+                            std::string an = (li < m_viz.layerActs.size()) ? m_viz.layerActs[li] : "?";
+                            tip = QString::asprintf("Layer %llu, Neuron %llu (epoch %d)\nBias: %+.4f\nAct: %s\nWeights: [%s]",
+                                (unsigned long long)li + 1, (unsigned long long)i + 1,
+                                m_viz.epoch, b, an.c_str(), ws.toLatin1().constData());
+                        } else if (m_net && li < m_net->numLayers() && i < m_net->layers()[li].size()) {
                             const Neuron& n = m_net->layers()[li].neurons()[i];
                             QString ws;
                             for (std::size_t k = 0; k < std::min<std::size_t>(n.weights().size(), 6); ++k)
@@ -778,16 +1017,20 @@ protected:
         }
         auto* dlg = new QDialog(window());
         m_expandedDlg = dlg;
-        dlg->setWindowTitle(m_tag.isEmpty() ? QStringLiteral("Network Architecture") : m_tag);
+        dlg->setWindowTitle(m_tag.isEmpty() ? QStringLiteral("Network (live)") : m_tag + QStringLiteral(" (live)"));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(900, 650);
         auto* lay = new QVBoxLayout(dlg);
         lay->setContentsMargins(6, 6, 6, 6);
         auto* big = new NetWidget;
         big->copyFrom(*this);
+        m_mirrors.push_back(big);
         lay->addWidget(big);
         dlg->show();
     }
+
+private:
+    QList<QPointer<NetWidget>> m_mirrors;
 
 private:
     ArchDesc m_arch;
@@ -796,6 +1039,12 @@ private:
     QString m_tag;
     std::vector<std::vector<QRectF>> m_hit;
     QPointer<QDialog> m_expandedDlg;
+    // Live snapshot state (§10, §13)
+    bool m_hasViz = false;
+    VisualizationState m_viz;
+    int m_fwdPhase = -1;   // highlighted weight-layer, -1 = none
+    bool m_liveMode = true; // false = FINAL (clean, no animation)
+    std::vector<std::tuple<int,int,int>> m_hot; // (layer, from, to) weight updates
 };
 
 // ---------------------------------------------------------------- main window
@@ -967,7 +1216,10 @@ protected:
         }
         m_targetCol->setMaximum(std::max(0, cols - 1));
         m_targetCol->setValue(-1);
-        refreshConfigUi();
+        // Full invalidation (not just refreshConfigUi): a newly dropped file
+        // must discard the previous run's metrics and network diagram, or the
+        // UI shows one dataset's results next to another dataset's config.
+        configChanged();
     }
 
 private:
@@ -984,6 +1236,8 @@ private:
     int m_batchIdx = 0;
     int m_seed = 42;
     bool m_shuffle = true;
+    bool m_splitShuffle = true;
+    int m_trainPct = 80, m_valPct = 10;
     int m_normMode = 1;
     struct HiddenCfg { int n = 8; ActiveActivation act = ACT_RELU; };
     static constexpr int kMaxHidden = 8;
@@ -1033,6 +1287,9 @@ private:
     QComboBox* m_epsCombo = nullptr;
     QSpinBox* m_seedSpin = nullptr;
     QCheckBox* m_shuffleChk = nullptr;
+    QCheckBox* m_splitShuffleChk = nullptr;
+    QSpinBox* m_trainPctSpin = nullptr, *m_valPctSpin = nullptr;
+    QLabel* m_testPctLbl = nullptr;
     QComboBox* m_normCombo = nullptr;
     std::vector<QPushButton*> m_lossBtns;
     std::vector<QPushButton*> m_optBtns;
@@ -1050,23 +1307,52 @@ private:
     QLabel* m_summaryBar = nullptr;
     QTimer* m_timer = nullptr;
     QSlider* m_speedSlider = nullptr;
+    QLabel* m_vizIntLbl = nullptr;
     QPushButton* m_stepBtn = nullptr;
     QScrollArea* m_cfgScroll = nullptr;
+    // -- live visualization timeline (§9, §10) --
+    std::vector<VisualizationState> m_viz;
+    int m_playIdx = -1; // -1 = follow latest (live)
+    bool m_playing = false;
+    bool m_netLiveMode = true; // false = FINAL (clean)
+    int m_fwdTick = 0;
+    int m_cVizIdx = -2, m_cFwdPhase = -2;
+    std::size_t m_cBndIdx = (std::size_t)-1;
+    QSlider* m_playSlider = nullptr;
+    QLabel* m_playLbl = nullptr;
+    QPushButton* m_playBtn = nullptr, *m_resetBtn = nullptr;
+    QPushButton* m_liveBtn = nullptr, *m_finalBtn = nullptr;
+    QTimer* m_playTimer = nullptr;
+    QLabel* m_netOutLbl = nullptr, *m_activityLbl = nullptr, *m_whatChangedLbl = nullptr;
+    Vector m_vizProbe, m_vizProbeTarget;
+    bool m_hasVizProbe = false;
+    QSlider* m_paceSlider = nullptr;
+    QLabel* m_paceValLbl = nullptr;
 
-    static void checkOnly(const std::vector<QPushButton*>& v, int idx) {
-        for (int i = 0; i < (int)v.size(); ++i)
-            v[(std::size_t)i]->setChecked(i == idx);
-    }
-
-    static void setExclusive(const std::vector<QPushButton*>& v) {
-        for (QPushButton* b : v) {
+    // Exclusive checkable-button group: radio-button behavior for QPushButtons
+    // without QButtonGroup's signal/slot machinery (no Q_OBJECT needed here).
+    // Shared state keeps the click lambdas safe; groups are held as members
+    // so the UI can re-sync checked states after presets/model loads.
+    class ExclusiveButtonGroup {
+    public:
+        void addButton(QPushButton* b) {
             b->setCheckable(true);
-            QObject::connect(b, &QPushButton::clicked, [v, b]() {
-                for (QPushButton* o : v) o->setChecked(o == b);
+            auto st = state_;
+            QObject::connect(b, &QPushButton::clicked, [st, b]() {
+                for (QPushButton* o : st->buttons) o->setChecked(o == b);
             });
+            st->buttons.push_back(b);
+            if (st->buttons.size() == 1) b->setChecked(true);
         }
-        if (!v.empty()) v.front()->setChecked(true);
-    }
+        void checkOnly(int idx) const {
+            for (int i = 0; i < (int)state_->buttons.size(); ++i)
+                state_->buttons[(std::size_t)i]->setChecked(i == idx);
+        }
+    private:
+        struct State { std::vector<QPushButton*> buttons; };
+        std::shared_ptr<State> state_ = std::make_shared<State>();
+    };
+    ExclusiveButtonGroup m_dsGroup, m_lossGroup, m_optGroup, m_tabGroup;
 
     QWidget* makeSection(const QString& text) {
         auto* w = new QWidget;
@@ -1114,6 +1400,11 @@ private:
         c.normMode = m_normMode;
         c.seed = (unsigned)m_seed;
         c.shuffle = m_shuffle;
+        c.splitShuffle = m_splitShuffle;
+        c.trainFrac = m_trainPct / 100.0;
+        c.valFrac = m_valPct / 100.0;
+        c.hidden.clear();
+        c.hiddenActs.clear();
         for (int i = 0; i < (int)m_hidden.size(); ++i) {
             c.hidden.push_back(m_hidden[(std::size_t)i].n);
             c.hiddenActs.push_back(actToName(m_hidden[(std::size_t)i].act));
@@ -1133,7 +1424,9 @@ private:
 
     std::string fingerprint() const {
         return kDsKeys[(int)m_dataset] + std::string("|") + m_csvPath + "|" +
-               std::to_string(m_targetCol->value()) + "|" + (m_headerChk->isChecked() ? "h" : "n");
+               std::to_string(m_targetCol->value()) + "|" + (m_headerChk->isChecked() ? "h" : "n") + "|" +
+               std::to_string(m_trainPct) + "|" + std::to_string(m_valPct) + "|" +
+               (m_splitShuffle ? "s" : "n") + std::to_string(m_normMode);
     }
 
     void refreshPreview() {
@@ -1295,7 +1588,7 @@ private:
             dsWellLay->addWidget(b);
             m_dsBtns.push_back(b);
         }
-        setExclusive(m_dsBtns);
+        for (QPushButton* b : m_dsBtns) m_dsGroup.addButton(b);
         for (int i = 0; i < 5; ++i) {
             connect(m_dsBtns[(std::size_t)i], &QPushButton::clicked, [this, i]() {
                 m_dataset = ActiveDataset(i);
@@ -1317,6 +1610,46 @@ private:
         m_dsInfoLbl->setWordWrap(true);
         dsInfoLay->addWidget(m_dsInfoLbl);
         s1->addWidget(dsInfoPanel);
+
+        // Dataset split (§8 of the split spec): test share is automatic.
+        auto* splitRow = new QHBoxLayout;
+        splitRow->setSpacing(6);
+        auto* splitLbl = new QLabel(QStringLiteral("SPLIT"));
+        splitLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        splitRow->addWidget(splitLbl);
+        m_trainPctSpin = new QSpinBox;
+        m_trainPctSpin->setRange(1, 98);
+        m_trainPctSpin->setValue(80);
+        m_trainPctSpin->setFixedWidth(64);
+        m_trainPctSpin->setSuffix(QStringLiteral("%"));
+        m_trainPctSpin->setToolTip(QStringLiteral("Training share of the dataset"));
+        connect(m_trainPctSpin, &QSpinBox::valueChanged, [this](int v) {
+            m_trainPct = v;
+            configChanged();
+        });
+        splitRow->addWidget(m_trainPctSpin);
+        auto* trainPctLbl = new QLabel(QStringLiteral("train"));
+        trainPctLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        splitRow->addWidget(trainPctLbl);
+        m_valPctSpin = new QSpinBox;
+        m_valPctSpin->setRange(0, 98);
+        m_valPctSpin->setValue(10);
+        m_valPctSpin->setFixedWidth(64);
+        m_valPctSpin->setSuffix(QStringLiteral("%"));
+        m_valPctSpin->setToolTip(QStringLiteral("Validation share of the dataset"));
+        connect(m_valPctSpin, &QSpinBox::valueChanged, [this](int v) {
+            m_valPct = v;
+            configChanged();
+        });
+        splitRow->addWidget(m_valPctSpin);
+        auto* valPctLbl = new QLabel(QStringLiteral("val"));
+        valPctLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        splitRow->addWidget(valPctLbl);
+        m_testPctLbl = new QLabel;
+        m_testPctLbl->setStyleSheet(QStringLiteral("color:#8A90A0;"));
+        splitRow->addWidget(m_testPctLbl);
+        splitRow->addStretch(1);
+        s1->addLayout(splitRow);
 
         // CSV options row
         m_csvRow = new QWidget;
@@ -1647,9 +1980,10 @@ private:
 
         trainCardLay->addLayout(paramGrid);
 
-        // Shuffle checkbox row
+        // Shuffle checkboxes: epoch shuffling vs split shuffling are
+        // independent settings (split order affects reproducibility too).
         auto* shufRow = new QHBoxLayout;
-        m_shuffleChk = new QCheckBox(QStringLiteral("Shuffle dataset samples every epoch"));
+        m_shuffleChk = new QCheckBox(QStringLiteral("Shuffle samples every epoch"));
         m_shuffleChk->setChecked(true);
         m_shuffleChk->setStyleSheet(QStringLiteral("color:#C9CDD8; font-size:11px;"));
         connect(m_shuffleChk, &QCheckBox::toggled, [this](bool b) {
@@ -1657,6 +1991,15 @@ private:
             configChanged();
         });
         shufRow->addWidget(m_shuffleChk);
+        m_splitShuffleChk = new QCheckBox(QStringLiteral("Shuffle before split"));
+        m_splitShuffleChk->setChecked(true);
+        m_splitShuffleChk->setStyleSheet(QStringLiteral("color:#C9CDD8; font-size:11px;"));
+        m_splitShuffleChk->setToolTip(QStringLiteral("Shuffle before the train/val/test split (seeded)"));
+        connect(m_splitShuffleChk, &QCheckBox::toggled, [this](bool b) {
+            m_splitShuffle = b;
+            configChanged();
+        });
+        shufRow->addWidget(m_splitShuffleChk);
         shufRow->addStretch(1);
         trainCardLay->addLayout(shufRow);
 
@@ -1697,7 +2040,7 @@ private:
             lossWellLay->addWidget(b);
             m_lossBtns.push_back(b);
         }
-        setExclusive(m_lossBtns);
+        for (QPushButton* b : m_lossBtns) m_lossGroup.addButton(b);
         for (int i = 0; i < 3; ++i) {
             connect(m_lossBtns[(std::size_t)i], &QPushButton::clicked, [this, i]() {
                 m_loss = ActiveLoss(i);
@@ -1729,7 +2072,7 @@ private:
             optWellLay->addWidget(b);
             m_optBtns.push_back(b);
         }
-        setExclusive(m_optBtns);
+        for (QPushButton* b : m_optBtns) m_optGroup.addButton(b);
         for (int i = 0; i < 3; ++i) {
             connect(m_optBtns[(std::size_t)i], &QPushButton::clicked, [this, i]() {
                 m_opt = ActiveOptimizer(i);
@@ -1859,82 +2202,78 @@ private:
         modelRow->addWidget(m_reportBtn, 1);
         outer->addLayout(modelRow);
 
-        // Dedicated pacing & step control row (clean spacing, responsive controls)
+        // Visualization pace (§1): snapshot every N epochs; snapshots feed
+        // Network/Boundary animation. Pace delays the worker per epoch so the
+        // eye can follow (slow motion); 0 = full speed.
         auto* paceRow = new QHBoxLayout;
         paceRow->setSpacing(8);
-        auto* paceLbl = new QLabel(QStringLiteral("Pacing:"));
+        auto* paceLbl = new QLabel(QStringLiteral("Viz every:"));
         paceLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:bold;"));
         m_speedSlider = new QSlider(Qt::Horizontal);
-        m_speedSlider->setRange(0, 20);
-        m_speedSlider->setValue(0);
-        m_speedSlider->setToolTip("Pacing delay per epoch (slide right to slow down for visual observation)");
-        connect(m_speedSlider, &QSlider::valueChanged, [](int v) {
-            g_bridge.epochDelayMs.store(v * 2); // 0 to 40ms delay per epoch
+        m_speedSlider->setRange(1, 50);
+        m_speedSlider->setValue(10);
+        m_speedSlider->setToolTip("Visualization snapshot every N epochs");
+        m_vizIntLbl = new QLabel(QStringLiteral("10 ep"));
+        m_vizIntLbl->setStyleSheet(QStringLiteral("color:#60A5FA; font-family:'Consolas',monospace; font-size:11px; font-weight:bold;"));
+        m_vizIntLbl->setFixedWidth(44);
+        connect(m_speedSlider, &QSlider::valueChanged, [this](int v) {
+            v = std::max(1, v);
+            g_bridge.vizInterval.store(v);
+            if (m_vizIntLbl) m_vizIntLbl->setText(QString::number(v) + QStringLiteral(" ep"));
         });
+        g_bridge.vizInterval.store(10);
         m_stepBtn = makeBtn(QStringLiteral("Step 10 Ep"), 90);
         m_stepBtn->setToolTip("Advance 10 epochs incrementally");
         connect(m_stepBtn, &QPushButton::clicked, [this]() {
             if (g_bridge.isTraining) return;
             ExperimentConfig cfg = currentConfig();
             cfg.epochs = 10;
+            captureVizProbe();
             g_bridge.resetLive();
+            m_viz.clear();
+            m_playIdx = -1;
+            m_playing = false;
             m_resultsShownFor = false;
             m_seenSeq = g_bridge.runSeq;
             g_bridge.isTraining = true;
             g_bridge.stopRequested = false;
             g_trainThread = std::make_unique<std::thread>([cfg]() {
                 ExperimentResult res = ExperimentController::run(cfg, &g_bridge, &g_bridge.stopRequested);
-                std::lock_guard<std::mutex> lock(g_bridge.mtx);
-                if (!res.error.empty()) {
-                    g_bridge.lastError = std::string("Error: ") + res.error;
-                } else {
-                    char buf[256];
-                    std::snprintf(buf, sizeof(buf),
-                                  "Train loss %.4f | Train acc %.1f%% | Test acc %.1f%% (%.2fs)%s",
-                                  res.trainLoss, res.trainAcc * 100.0, res.testAcc * 100.0,
-                                  res.seconds, res.stopped ? " — stopped" : "");
-                    g_bridge.summary = buf;
-                    g_bridge.hasResult = true;
-                    g_bridge.lastCompleted = !res.stopped;
-                    g_bridge.lastStopped = res.stopped;
-                    g_bridge.lastTrainLoss = res.trainLoss;
-                    g_bridge.lastTrainAcc = res.trainAcc;
-                    g_bridge.lastValLoss = res.valLoss;
-                    g_bridge.lastValAcc = res.valAcc;
-                    g_bridge.lastTestLoss = res.testLoss;
-                    g_bridge.lastTestAcc = res.testAcc;
-                    g_bridge.lastHasVal = res.hasVal;
-                    g_bridge.lastWarning = res.warning;
-                    g_bridge.lastConfusion = res.confusion;
-                    g_bridge.lastNumClasses = res.numClasses;
-                    g_bridge.lastHasConfusion = res.hasConfusion;
-                    g_bridge.lastArch = describeNet(res.net);
-                    g_bridge.lastOptDesc = cfg.optimizer + " lr=" + std::to_string(cfg.opt.learningRate);
-                    std::size_t effB = (cfg.batchSize == 0 || cfg.batchSize > res.data.nTrain)
-                        ? res.data.nTrain : cfg.batchSize;
-                    g_bridge.lastBatchTxt = (cfg.batchSize == 0 ? std::string("full")
-                        : std::to_string(cfg.batchSize)) + " (eff " + std::to_string(effB) + ")";
-                    g_bridge.lastSeed = (int)cfg.seed;
-                    g_bridge.lastDsDesc = res.data.name + " " + std::to_string(res.data.samples) + " samples";
-                    g_bridge.lastLoss = cfg.loss;
-                    if (res.hasNet) {
-                        g_bridge.lastNet = std::make_shared<NeuralNetwork>(res.net);
-                        g_bridge.lastTrain = res.data.train;
-                        g_bridge.lastTest = res.data.test;
-                        g_bridge.lastInDim = res.data.inDim;
-                        g_bridge.lastOutDim = res.data.outDim;
-                        g_bridge.lastEpochsRun = (int)res.history.trainLoss.size();
-                        g_bridge.lastEpochsTarget = cfg.epochs;
-                        g_bridge.lastTiny = res.data.tiny;
-                    }
-                }
+                finalizeRun(cfg, res);
                 g_bridge.isTraining = false;
             });
         });
         paceRow->addWidget(paceLbl);
         paceRow->addWidget(m_speedSlider, 1);
+        paceRow->addWidget(m_vizIntLbl);
         paceRow->addWidget(m_stepBtn);
         outer->addLayout(paceRow);
+        // Slow-motion pacing: ms of delay per epoch in the worker thread.
+        auto* slowRow = new QHBoxLayout;
+        slowRow->setSpacing(8);
+        auto* slowLbl = new QLabel(QStringLiteral("Pace:"));
+        slowLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:bold;"));
+        slowLbl->setToolTip("Slow-motion delay per epoch so training is watchable (0 = full speed)");
+        m_paceSlider = new QSlider(Qt::Horizontal);
+        m_paceSlider->setRange(0, 200);
+        m_paceSlider->setValue(0);
+        m_paceSlider->setToolTip("Slow-motion delay per epoch (0 = full speed, 200 = slowest)");
+        m_paceValLbl = new QLabel(QStringLiteral("0ms"));
+        m_paceValLbl->setStyleSheet(QStringLiteral("color:#60A5FA; font-family:'Consolas',monospace; font-size:11px; font-weight:bold;"));
+        m_paceValLbl->setFixedWidth(44);
+        connect(m_paceSlider, &QSlider::valueChanged, [this](int v) {
+            v = std::max(0, v);
+            g_bridge.paceDelayMs.store(v);
+            if (m_paceValLbl) m_paceValLbl->setText(QString::number(v) + QStringLiteral("ms"));
+        });
+        g_bridge.paceDelayMs.store(0);
+        auto* slowHint = new QLabel(QStringLiteral("slow motion"));
+        slowHint->setStyleSheet(QStringLiteral("color:#64748B; font-size:10px;"));
+        slowRow->addWidget(slowLbl);
+        slowRow->addWidget(m_paceSlider, 1);
+        slowRow->addWidget(m_paceValLbl);
+        slowRow->addWidget(slowHint);
+        outer->addLayout(slowRow);
         m_trainBtn = new QPushButton(QStringLiteral("START TRAINING"));
         m_trainBtn->setObjectName(QStringLiteral("trainBtn"));
         m_trainBtn->setCursor(Qt::PointingHandCursor);
@@ -1958,8 +2297,11 @@ private:
         m_tabAcc = makeBtn(QStringLiteral("Accuracy (%)"), 140);
         m_tabBnd = makeBtn(QStringLiteral("Boundary"), 110);
         m_tabNet = makeBtn(QStringLiteral("Network"), 110);
-        setExclusive({m_tabLoss, m_tabAcc, m_tabBnd, m_tabNet});
-        m_tabLoss->setChecked(true);
+        m_tabGroup.addButton(m_tabLoss);
+        m_tabGroup.addButton(m_tabAcc);
+        m_tabGroup.addButton(m_tabBnd);
+        m_tabGroup.addButton(m_tabNet);
+        m_tabGroup.checkOnly(0);
         connect(m_tabLoss, &QPushButton::clicked, [this]() { m_view = VIEW_LOSS; syncTabs(); });
         connect(m_tabAcc, &QPushButton::clicked, [this]() { m_view = VIEW_ACC; syncTabs(); });
         connect(m_tabBnd, &QPushButton::clicked, [this]() { m_view = VIEW_BOUNDARY; syncTabs(); });
@@ -1970,6 +2312,61 @@ private:
         tabRow->addWidget(m_tabNet);
         tabRow->addStretch(1);
         rv->addLayout(tabRow);
+        // Playback timeline (§9, §10): shared Network + Boundary epoch state.
+        auto* playRow = new QHBoxLayout;
+        playRow->setSpacing(6);
+        m_playBtn = makeBtn(QStringLiteral("▶ Play"), 80);
+        m_playBtn->setToolTip("Play back recorded training states");
+        connect(m_playBtn, &QPushButton::clicked, [this]() { togglePlayback(); });
+        m_resetBtn = makeBtn(QStringLiteral("Reset"), 70);
+        m_resetBtn->setToolTip("Back to live (latest epoch)");
+        connect(m_resetBtn, &QPushButton::clicked, [this]() {
+            m_playing = false;
+            m_playIdx = -1;
+            syncPlaybackUi();
+        });
+        m_playSlider = new QSlider(Qt::Horizontal);
+        m_playSlider->setRange(0, 0);
+        m_playSlider->setValue(0);
+        m_playSlider->setEnabled(false);
+        m_playSlider->setToolTip("Scrub through learning: boundary, network, metrics follow");
+        connect(m_playSlider, &QSlider::valueChanged, [this](int v) {
+            if (!m_viz.empty()) {
+                m_playIdx = std::max(0, std::min((int)m_viz.size() - 1, v));
+                syncPlaybackUi();
+            }
+        });
+        m_playLbl = new QLabel(QStringLiteral("Live"));
+        m_playLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-family:'Consolas',monospace; font-size:11px;"));
+        m_playLbl->setFixedWidth(110);
+        m_liveBtn = makeBtn(QStringLiteral("LIVE"), 60);
+        m_liveBtn->setCheckable(true);
+        m_liveBtn->setChecked(true);
+        m_liveBtn->setToolTip("LIVE: animated activations, forward-pass glow, updates");
+        connect(m_liveBtn, &QPushButton::clicked, [this]() {
+            m_netLiveMode = true;
+            m_liveBtn->setChecked(true);
+            m_finalBtn->setChecked(false);
+        });
+        m_finalBtn = makeBtn(QStringLiteral("FINAL"), 60);
+        m_finalBtn->setCheckable(true);
+        m_finalBtn->setChecked(false);
+        m_finalBtn->setToolTip("FINAL: clean architecture, learned weights");
+        connect(m_finalBtn, &QPushButton::clicked, [this]() {
+            m_netLiveMode = false;
+            m_finalBtn->setChecked(true);
+            m_liveBtn->setChecked(false);
+        });
+        playRow->addWidget(m_playBtn);
+        playRow->addWidget(m_resetBtn);
+        playRow->addWidget(m_playSlider, 1);
+        playRow->addWidget(m_playLbl);
+        playRow->addWidget(m_liveBtn);
+        playRow->addWidget(m_finalBtn);
+        rv->addLayout(playRow);
+        m_playTimer = new QTimer(this);
+        m_playTimer->setInterval(350);
+        connect(m_playTimer, &QTimer::timeout, [this]() { advancePlayback(); });
         m_plotStack = new QWidget;
         auto* stackLay = new QVBoxLayout(m_plotStack);
         stackLay->setContentsMargins(0, 0, 0, 0);
@@ -1990,6 +2387,19 @@ private:
         m_summaryBar->setStyleSheet(QStringLiteral("color:#FACC15; padding:8px 12px;"));
         m_summaryBar->setWordWrap(true);
         rv->addWidget(m_summaryBar);
+        // Output prediction (§6, §7) + activity (§11) + what-changed (§12).
+        m_netOutLbl = new QLabel(QStringLiteral("Output: —"));
+        m_netOutLbl->setStyleSheet(QStringLiteral("color:#E2E8F0; background:#0D111A; border:1px solid #1E293B; border-radius:0px; padding:6px 10px; font-family:'Consolas','Segoe UI',monospace; font-size:11px;"));
+        m_netOutLbl->setWordWrap(true);
+        rv->addWidget(m_netOutLbl);
+        m_activityLbl = new QLabel(QStringLiteral("LEARNING ACTIVITY — train to begin."));
+        m_activityLbl->setStyleSheet(QStringLiteral("color:#94A3B8; background:#0D111A; border:1px solid #1E293B; border-radius:0px; padding:6px 10px; font-family:'Consolas','Segoe UI',monospace; font-size:11px;"));
+        m_activityLbl->setWordWrap(true);
+        rv->addWidget(m_activityLbl);
+        m_whatChangedLbl = new QLabel(QStringLiteral("WHAT CHANGED? — train to begin."));
+        m_whatChangedLbl->setStyleSheet(QStringLiteral("color:#94A3B8; background:#0D111A; border:1px solid #1E293B; border-radius:0px; padding:6px 10px; font-family:'Consolas','Segoe UI',monospace; font-size:11px;"));
+        m_whatChangedLbl->setWordWrap(true);
+        rv->addWidget(m_whatChangedLbl);
 
         // ----- central layout -----
         auto* central = new QWidget;
@@ -2160,6 +2570,11 @@ private:
     void configChanged() {
         if (g_bridge.isTraining) return; // config locked during training
         g_bridge.resetLive();
+        m_viz.clear();
+        m_playIdx = -1;
+        m_playing = false;
+        if (m_playTimer && m_playTimer->isActive()) m_playTimer->stop();
+        m_cVizIdx = -2; m_cFwdPhase = -2; m_cBndIdx = (std::size_t)-1;
         m_resultsShownFor = false;
         refreshConfigUi();
     }
@@ -2202,9 +2617,9 @@ private:
     // Never throws into Qt: any unexpected failure becomes an error label
     // (an exception escaping a slot would terminate the whole app).
     void refreshConfigUi() try {
-        checkOnly(m_dsBtns, (int)m_dataset);
-        checkOnly(m_lossBtns, (int)m_loss);
-        checkOnly(m_optBtns, (int)m_opt);
+        m_dsGroup.checkOnly((int)m_dataset);
+        m_lossGroup.checkOnly((int)m_loss);
+        m_optGroup.checkOnly((int)m_opt);
         // Preview FIRST: arch summary + info panel below consume it.
         refreshPreview();
         m_muRow->setVisible(m_opt == OPT_MOMENTUM);
@@ -2253,13 +2668,31 @@ private:
                                                      (unsigned long long)d.features)
                 + (d.discreteClasses ? QString::number((unsigned long long)d.classes) : QStringLiteral("—"))
                 + QStringLiteral("\n");
+            {
+                QString tstat;
+                if (d.targetDistinct <= 32)
+                    tstat = QString::asprintf("%llu distinct values [%g..%g]",
+                        (unsigned long long)d.targetDistinct, d.targetMin, d.targetMax);
+                else
+                    tstat = QString::asprintf("many distinct values [%g..%g]",
+                        d.targetMin, d.targetMax);
+                info += QString::asprintf("Target: col %d — ", d.targetColUsed) + tstat;
+                if (!d.targetNote.empty())
+                    info += QStringLiteral(" (") + QString::fromStdString(d.targetNote) + QStringLiteral(")");
+                info += QStringLiteral("\n");
+            }
             if (d.tiny)
-                info += QString::asprintf("Train: %llu | Val: — | Test: %llu (full table: tiny dataset)\n",
-                                          (unsigned long long)d.nTrain, (unsigned long long)d.nTest);
-            else
-                info += QString::asprintf("Train: %llu | Val: %llu | Test: %llu (split 80/10/10)\n",
-                                          (unsigned long long)d.nTrain, (unsigned long long)d.nVal,
-                                          (unsigned long long)d.nTest);
+                info += QString::asprintf("Train: %llu | Val: — | Test: — (full table: tiny dataset, no held-out test)\n",
+                                          (unsigned long long)d.nTrain);
+            else {
+                std::size_t tot = d.nTrain + d.nVal + d.nTest;
+                int tp = tot ? (int)(100.0 * d.nTrain / tot) : 0;
+                int vp = tot ? (int)(100.0 * d.nVal / tot) : 0;
+                info += QString::asprintf("Train: %llu (%d%%) | Val: %llu (%d%%) | Test: %llu (%d%%)\n",
+                                          (unsigned long long)d.nTrain, tp,
+                                          (unsigned long long)d.nVal, vp,
+                                          (unsigned long long)d.nTest, 100 - tp - vp);
+            }
             info += QString::asprintf("Input dim: %llu | Output dim: %llu",
                                       (unsigned long long)d.inDim, (unsigned long long)d.outDim);
             m_dsInfoLbl->setText(info);
@@ -2286,8 +2719,9 @@ private:
                 : QString::number((unsigned long long)kBatchVals[m_batchIdx]);
             m_cfgLbl->setText(QString::fromLatin1(kOptKeys[(int)m_opt]) + QString::asprintf(" | lr %g | ep %d | ", m_lr, m_epochsTarget)
                 + QStringLiteral("batch ") + batchTxt
-                + QString::asprintf(" (eff %llu) | seed %d%s | %s", (unsigned long long)eff, m_seed,
-                                    m_shuffle ? "" : " noshuffle", normN));
+                + QString::asprintf(" (eff %llu) | seed %d%s%s | %s", (unsigned long long)eff, m_seed,
+                                    m_splitShuffle ? "" : " nosplit-shuffle",
+                                    m_shuffle ? "" : " noepoch-shuffle", normN));
         }
         refreshNetPreview();
         refreshLiveUi();
@@ -2304,7 +2738,7 @@ private:
     }
 
     void syncTabs() {
-        checkOnly({m_tabLoss, m_tabAcc, m_tabBnd, m_tabNet}, (int)m_view);
+        m_tabGroup.checkOnly((int)m_view);
         m_plot->setVisible(m_view == VIEW_LOSS || m_view == VIEW_ACC);
         m_boundary->setVisible(m_view == VIEW_BOUNDARY);
         m_netview->setVisible(m_view == VIEW_NETWORK);
@@ -2395,7 +2829,7 @@ private:
         bool hasResult = false, completed = false, stopped = false;
         std::string lastError;
         double fTL = 0, fTA = 0, fVA = 0, fTeA = 0;
-        bool fHasVal = false;
+        bool fHasVal = false, fHasTest = false;
         unsigned seq = 0;
         {
             std::lock_guard<std::mutex> lock(g_bridge.mtx);
@@ -2413,6 +2847,7 @@ private:
             fVA = g_bridge.lastValAcc;
             fTeA = g_bridge.lastTestAcc;
             fHasVal = g_bridge.lastHasVal;
+            fHasTest = g_bridge.lastHasTest;
             seq = g_bridge.runSeq;
         }
 
@@ -2449,7 +2884,8 @@ private:
             setOnce(m_trainLossLbl, m_cLoss, QString::asprintf("Train Loss: %.4f", fTL));
             setOnce(m_trainAccLbl, m_cTrAcc, QString::asprintf("Train Acc: %.1f%%", fTA * 100.0f));
             setOnce(m_valAccLbl, m_cValAcc, fHasVal ? QString::asprintf("Val Acc: %.1f%%", fVA * 100.0f) : "Val Acc: —");
-            setOnce(m_testAccLbl, m_cTeAcc, QString::asprintf("Test Acc: %.1f%%", fTeA * 100.0f));
+            setOnce(m_testAccLbl, m_cTeAcc, fHasTest
+                ? QString::asprintf("Test Acc: %.1f%%", fTeA * 100.0f) : "Test Acc: —");
             setSumStyle(QStringLiteral("color:#FACC15;"));
             setOnce(m_summaryBar, m_cSumBar, QString::fromStdString(liveSummary));
             setOnce(m_summaryLbl, m_cSum, QString::fromStdString(liveSummary));
@@ -2493,6 +2929,46 @@ private:
                               m_view == VIEW_ACC ? valAcc : valLoss,
                               m_view == VIEW_ACC, !valLoss.empty() || !valAcc.empty(), liveEpoch);
         }
+
+        // ---- live snapshots (§1, §8-§10): pull new states, render shared timeline.
+        {
+            std::vector<VisualizationState> fresh;
+            {
+                std::lock_guard<std::mutex> lock(g_bridge.mtx);
+                if (g_bridge.vizStates.size() != m_viz.size())
+                    fresh = g_bridge.vizStates;
+            }
+            if (!fresh.empty()) m_viz = std::move(fresh);
+        }
+        if (!m_viz.empty()) {
+            m_fwdTick++;
+            // Clamp playback idx if the run restarted with fewer snapshots.
+            if (m_playIdx >= (int)m_viz.size()) m_playIdx = -1;
+            renderVizState();
+            // When scrubbing history, metrics show the selected epoch (§15, §16).
+            int sidx = selectedVizIdx();
+            if (sidx >= 0 && m_playIdx >= 0) {
+                const auto& st = m_viz[(std::size_t)sidx];
+                QString ept = QString::asprintf("Epoch: %d / %d (viewing Ep %d — Reset for live)",
+                    liveEpoch, m_epochsTarget, st.epoch);
+                setOnce(m_epochLbl, m_cEpoch, ept);
+                QString lt = QString::asprintf("Train Loss: %.4f (Ep %d)", st.trainLoss, st.epoch);
+                setOnce(m_trainLossLbl, m_cLoss, lt);
+                QString at = QString::asprintf("Train Acc: %.1f%% (Ep %d)", st.trainAcc * 100.0f, st.epoch);
+                setOnce(m_trainAccLbl, m_cTrAcc, at);
+                if (st.hasVal)
+                    setOnce(m_valAccLbl, m_cValAcc,
+                        QString::asprintf("Val Acc: %.1f%% (Ep %d)", st.valAcc * 100.0f, st.epoch));
+                QString sb = QString::asprintf("Ep %d | loss %.4f acc %.1f%% — scrubbing history (Reset for live)",
+                    st.epoch, st.trainLoss, st.trainAcc * 100.0f);
+                setOnce(m_summaryBar, m_cSumBar, sb);
+            }
+        } else if (m_netOutLbl) {
+            // No snapshots yet: keep panels idle, never stale.
+            if (g_bridge.isTraining) {
+                m_netOutLbl->setText(QStringLiteral("Output: collecting snapshots…"));
+            }
+        }
     }
 
     void freezeHeader(const QString& na) {
@@ -2501,6 +2977,332 @@ private:
         setOnce(m_trainAccLbl, m_cTrAcc, QStringLiteral("Train Acc: ") + na);
         setOnce(m_valAccLbl, m_cValAcc, QStringLiteral("Val Acc: ") + na);
         setOnce(m_testAccLbl, m_cTeAcc, QStringLiteral("Test Acc: ") + na);
+    }
+
+    // ---- live visualization timeline (§9, §10) ----
+    void captureVizProbe() {
+        m_hasVizProbe = false;
+        if (!m_previewErr.empty()) return;
+        const Dataset* src = nullptr;
+        if (m_preview.train.size() > 0) src = &m_preview.train;
+        if (src && src->size() > 0) {
+            m_vizProbe = src->input(0);
+            m_vizProbeTarget = src->target(0);
+            m_hasVizProbe = true;
+        }
+    }
+    Vector vizProbe() const {
+        if (m_hasVizProbe && !m_vizProbe.empty()) return m_vizProbe;
+        std::lock_guard<std::mutex> lock(g_bridge.mtx);
+        if (g_bridge.lastTrain.size() > 0) return g_bridge.lastTrain.input(0);
+        if (m_preview.train.size() > 0) return m_preview.train.input(0);
+        return Vector{};
+    }
+    Vector vizProbeTarget() const {
+        if (m_hasVizProbe && !m_vizProbeTarget.empty()) return m_vizProbeTarget;
+        std::lock_guard<std::mutex> lock(g_bridge.mtx);
+        if (g_bridge.lastTrain.size() > 0) return g_bridge.lastTrain.target(0);
+        if (m_preview.train.size() > 0) return m_preview.train.target(0);
+        return Vector{};
+    }
+    // Index into m_viz to render: explicit playback idx, else latest.
+    int selectedVizIdx() const {
+        if (m_viz.empty()) return -1;
+        if (m_playIdx >= 0 && m_playIdx < (int)m_viz.size()) return m_playIdx;
+        return (int)m_viz.size() - 1;
+    }
+    void togglePlayback() {
+        if (m_viz.empty()) return;
+        m_playing = !m_playing;
+        if (m_playing && m_playIdx < 0)
+            m_playIdx = 0;
+        if (m_playing && !m_playTimer->isActive()) m_playTimer->start();
+        if (!m_playing && m_playTimer->isActive()) m_playTimer->stop();
+        syncPlaybackUi();
+    }
+    void advancePlayback() {
+        if (!m_playing || m_viz.empty()) return;
+        int idx = selectedVizIdx();
+        if (idx < 0) idx = 0;
+        else idx++;
+        if (idx >= (int)m_viz.size()) {
+            // Stop at the end (Reset returns to live).
+            m_playing = false;
+            if (m_playTimer->isActive()) m_playTimer->stop();
+            m_playIdx = -1;
+        } else {
+            m_playIdx = idx;
+        }
+        syncPlaybackUi();
+    }
+    void syncPlaybackUi() {
+        if (!m_playSlider || !m_playLbl || !m_playBtn) return;
+        m_playSlider->blockSignals(true);
+        if (m_viz.empty()) {
+            m_playSlider->setRange(0, 0);
+            m_playSlider->setValue(0);
+            m_playSlider->setEnabled(false);
+            m_playLbl->setText(QStringLiteral("No snaps"));
+            m_playBtn->setText(QStringLiteral("▶ Play"));
+            m_playBtn->setEnabled(false);
+        } else {
+            m_playSlider->setRange(0, (int)m_viz.size() - 1);
+            m_playSlider->setEnabled(true);
+            m_playBtn->setEnabled(true);
+            int idx = selectedVizIdx();
+            m_playSlider->setValue(idx);
+            if (m_playIdx < 0)
+                m_playLbl->setText(QString::asprintf("Live %d", m_viz.back().epoch));
+            else
+                m_playLbl->setText(QString::asprintf("Epoch %d", m_viz[(std::size_t)idx].epoch));
+            m_playBtn->setText(m_playing ? QStringLiteral("II Pause") : QStringLiteral("▶ Play"));
+        }
+        m_playSlider->blockSignals(false);
+    }
+    // ASCII bars: '#' = filled, '-' = empty. (Block glyphs like U+2588/U+2591
+    // render as '?' in the app font, so they are deliberately avoided.)
+    static QString barStr(double frac, int width = 12) {
+        frac = std::max(0.0, std::min(1.0, frac));
+        int fill = (int)(frac * width + 0.5);
+        QString s;
+        for (int i = 0; i < fill; ++i) s += QLatin1Char('#');
+        for (int i = fill; i < width; ++i) s += QLatin1Char('-');
+        return s;
+    }
+    // Top-N absolute weight changes between snapshots k-1 -> k.
+    struct WeightDelta { int l, a, b; double d; double absd; };
+    std::vector<WeightDelta> topWeightChanges(std::size_t k, int topN = 3) const {
+        std::vector<WeightDelta> out;
+        if (k == 0 || k >= m_viz.size()) return out;
+        const auto& A = m_viz[k - 1], &B = m_viz[k];
+        if (A.weights.size() != B.weights.size()) return out;
+        for (std::size_t l = 0; l < B.weights.size(); ++l) {
+            if (l >= A.weights.size()) break;
+            for (std::size_t j = 0; j < B.weights[l].size(); ++j) {
+                if (j >= A.weights[l].size()) break;
+                for (std::size_t i = 0; i < B.weights[l][j].size(); ++i) {
+                    if (i >= A.weights[l][j].size()) break;
+                    double d = B.weights[l][j][i] - A.weights[l][j][i];
+                    out.push_back({(int)l, (int)i, (int)j, d, std::abs(d)});
+                }
+            }
+        }
+        std::sort(out.begin(), out.end(), [](const WeightDelta& x, const WeightDelta& y) {
+            return x.absd > y.absd;
+        });
+        if ((int)out.size() > topN) out.resize((std::size_t)topN);
+        return out;
+    }
+    // Render the selected snapshot into Network + Boundary + info panels.
+    void renderVizState() {
+        int idx = selectedVizIdx();
+        if (idx < 0 || idx >= (int)m_viz.size()) return;
+        const VisualizationState& st = m_viz[(std::size_t)idx];
+        Vector probe = vizProbe();
+        Vector ptarget = vizProbeTarget();
+        auto fire = probe.empty() ? std::vector<std::vector<double>>{} : forwardViz(st, probe);
+        Vector out;
+        if (!fire.empty()) out = fire.back();
+        // --- prediction + correctness (§6, §7) ---
+        QString outTxt;
+        if (!out.empty() && !probe.empty()) {
+            if (out.size() == 1) {
+                double v = std::max(0.0, std::min(1.0, out[0]));
+                double t = ptarget.empty() ? 0.0 : ptarget[0];
+                int pc = v >= 0.5 ? 1 : 0, tc = t >= 0.5 ? 1 : 0;
+                QString mark = (ptarget.empty() ? QStringLiteral("") :
+                    (pc == tc ? QStringLiteral(" [OK]") : QStringLiteral(" [WRONG]")));
+                outTxt = QString::asprintf("OUT %.3f %s%s  (Class0 %.0f%% / Class1 %.0f%%)",
+                    v, barStr(v).toLatin1().constData(), mark.toLatin1().constData(),
+                    (1 - v) * 100.0, v * 100.0);
+            } else {
+                std::size_t bp = 0;
+                for (std::size_t k = 1; k < out.size(); ++k)
+                    if (out[k] > out[bp]) bp = k;
+                std::size_t bt = 0;
+                if (!ptarget.empty() && ptarget.size() == out.size())
+                    for (std::size_t k = 1; k < ptarget.size(); ++k)
+                        if (ptarget[k] > ptarget[bt]) bt = k;
+                QString mark = (ptarget.empty() ? QStringLiteral("") :
+                    (bp == bt ? QStringLiteral(" [OK]") : QStringLiteral(" [X]")));
+                outTxt = QString::asprintf("Pred %llu (%.0f%%)%s — ", (unsigned long long)bp,
+                    out[bp] * 100.0, mark.toLatin1().constData());
+                for (std::size_t k = 0; k < out.size() && k < 6; ++k)
+                    outTxt += QString::asprintf("%s%.0f%% %s  ", k ? "· " : "",
+                        std::max(0.0, std::min(1.0, out[k])) * 100.0,
+                        barStr(std::max(0.0, std::min(1.0, out[k])), 8).toLatin1().constData());
+            }
+            outTxt = QString::asprintf("[Ep %d] ", st.epoch) + outTxt;
+        } else {
+            outTxt = QString::asprintf("[Ep %d] Output: — (no probe)", st.epoch);
+        }
+        if (m_netOutLbl) m_netOutLbl->setText(outTxt);
+        // --- weight deltas + activity (§11, §12) ---
+        double meanAbsUpd = 0;
+        std::size_t updN = 0;
+        auto top = topWeightChanges((std::size_t)idx, 3);
+        for (const auto& d : top) { meanAbsUpd += d.absd; updN++; }
+        // Mean over top is illustrative; full mean for the bar:
+        double fullMean = 0;
+        std::size_t fullN = 0;
+        if (idx > 0) {
+            const auto& A = m_viz[(std::size_t)idx - 1];
+            for (std::size_t l = 0; l < st.weights.size() && l < A.weights.size(); ++l)
+                for (std::size_t j = 0; j < st.weights[l].size() && j < A.weights[l].size(); ++j)
+                    for (std::size_t i = 0; i < st.weights[l][j].size() && i < A.weights[l][j].size(); ++i) {
+                        fullMean += std::abs(st.weights[l][j][i] - A.weights[l][j][i]);
+                        fullN++;
+                    }
+            if (fullN) fullMean /= (double)fullN;
+        }
+        double meanFire = 0;
+        std::size_t fireN = 0;
+        for (const auto& col : fire)
+            for (double v : col) { meanFire += std::abs(v); fireN++; }
+        if (fireN) meanFire /= (double)fireN;
+        double lossDrop = 0;
+        if (idx > 0) lossDrop = std::max(0.0, (double)m_viz[(std::size_t)idx - 1].trainLoss - (double)st.trainLoss);
+        if (m_activityLbl) {
+            m_activityLbl->setText(
+                QStringLiteral("LEARNING ACTIVITY [Ep ") + QString::number(st.epoch) + QStringLiteral("]  ") +
+                QStringLiteral("Forward ") + barStr(std::min(1.0, meanFire)) + QString::asprintf(" %.2f   ", meanFire) +
+                QStringLiteral("Grad ") + barStr(std::min(1.0, lossDrop * 8.0)) + QString::asprintf(" %.3f   ", lossDrop) +
+                QStringLiteral("Upd ") + barStr(std::min(1.0, fullMean * 20.0)) + QString::asprintf(" %.4f   ", fullMean) +
+                QStringLiteral("Neuro ") + barStr(std::min(1.0, meanFire)) + QString::asprintf(" %.2f", meanFire));
+        }
+        if (m_whatChangedLbl) {
+            QString wc = QString::asprintf("WHAT CHANGED? Ep %d->%d  Loss %+.4f  Acc %+.1f%%  ",
+                idx > 0 ? m_viz[(std::size_t)idx - 1].epoch : st.epoch, st.epoch,
+                idx > 0 ? (double)st.trainLoss - (double)m_viz[(std::size_t)idx - 1].trainLoss : 0.0,
+                idx > 0 ? ((double)st.trainAcc - (double)m_viz[(std::size_t)idx - 1].trainAcc) * 100.0 : 0.0);
+            if (top.empty()) wc += QStringLiteral("Largest updates: -");
+            else {
+                wc += QStringLiteral("Largest: ");
+                for (std::size_t t = 0; t < top.size(); ++t) {
+                    const auto& d = top[t];
+                    wc += QString::asprintf("%sL%llu[%d]->[%d] %+.3f", t ? "  |  " : "",
+                        (unsigned long long)d.l + 1, d.a, d.b, d.d);
+                }
+            }
+            m_whatChangedLbl->setText(wc);
+        }
+        // --- network (§2-§5, §13) ---
+        int nLayers = (int)st.weights.size();
+        int phase = -1;
+        if (m_netLiveMode && nLayers > 0) {
+            if (g_bridge.isTraining || m_playing) phase = (m_fwdTick / 3) % nLayers;
+            else phase = nLayers - 1; // paused live: show full path glow on output
+        }
+        std::vector<std::tuple<int,int,int>> hot;
+        for (const auto& d : top) hot.emplace_back(d.l, d.a, d.b);
+        QString tag = QString::asprintf("%s — Ep %d — %s",
+            m_netLiveMode ? "LIVE" : "FINAL", st.epoch,
+            describeNetFromViz(st).c_str());
+        // Avoid repaints when nothing changed (except forward animation).
+        if (idx != m_cVizIdx || phase != m_cFwdPhase) {
+            m_cVizIdx = idx;
+            m_cFwdPhase = phase;
+            m_netview->setSnapshot(st, probe, tag, phase, m_netLiveMode, hot);
+            m_shownNetFp = archSummary() + "|" + m_previewFp + "|viz";
+        } else if (m_netview) {
+            // Still push phase for animation smoothness.
+            m_netview->setSnapshot(st, probe, tag, phase, m_netLiveMode, hot);
+        }
+        // --- boundary (§8): recompute grid from snapshot when 2D ---
+        if (st.inDim == 2 && !probe.empty()) {
+            if ((std::size_t)idx != m_cBndIdx) {
+                m_cBndIdx = (std::size_t)idx;
+                renderBoundaryFromViz(st);
+            }
+        }
+        // --- playback slider label ---
+        syncPlaybackUi();
+    }
+    static std::string describeNetFromViz(const VisualizationState& st) {
+        std::string s = std::to_string(st.inDim);
+        for (std::size_t l = 0; l < st.weights.size(); ++l) {
+            std::string an = (l < st.layerActs.size()) ? st.layerActs[l] : "?";
+            std::size_t n = (l < st.biases.size()) ? st.biases[l].size() : 0;
+            s += " -> " + std::to_string(n) + "(" + an + ")";
+        }
+        return s;
+    }
+    void renderBoundaryFromViz(const VisualizationState& st) {
+        if (st.inDim != 2) return;
+        // Extent from training data (or probe fallback).
+        double x0 = 1e300, x1 = -1e300, y0 = 1e300, y1 = -1e300;
+        bool have = false;
+        {
+            std::lock_guard<std::mutex> lock(g_bridge.mtx);
+            auto eat = [&](const Dataset& d) {
+                for (std::size_t i = 0; i < d.size(); ++i) {
+                    if (d.input(i).size() < 2) continue;
+                    x0 = std::min(x0, d.input(i)[0]); x1 = std::max(x1, d.input(i)[0]);
+                    y0 = std::min(y0, d.input(i)[1]); y1 = std::max(y1, d.input(i)[1]);
+                    have = true;
+                }
+            };
+            if (g_bridge.lastTrain.size()) eat(g_bridge.lastTrain);
+            if (g_bridge.lastTest.size()) eat(g_bridge.lastTest);
+        }
+        if (!have) {
+            if (m_preview.train.size() > 0) {
+                for (std::size_t i = 0; i < m_preview.train.size(); ++i) {
+                    x0 = std::min(x0, m_preview.train.input(i)[0]);
+                    x1 = std::max(x1, m_preview.train.input(i)[0]);
+                    y0 = std::min(y0, m_preview.train.input(i)[1]);
+                    y1 = std::max(y1, m_preview.train.input(i)[1]);
+                    have = true;
+                }
+            }
+        }
+        if (!have) { x0 = 0; x1 = 1; y0 = 0; y1 = 1; }
+        double dx = (x1 - x0) == 0 ? 1.0 : (x1 - x0), dy = (y1 - y0) == 0 ? 1.0 : (y1 - y0);
+        x0 -= dx * 0.15; x1 += dx * 0.15; y0 -= dy * 0.15; y1 += dy * 0.15;
+        const int N = 70; // live grids stay cheap (§19); final uses 90 via rebuildVizCaches
+        QImage grid(N, N, QImage::Format_RGB32);
+        bool multi = !st.weights.empty() && !st.biases.back().empty() && st.biases.back().size() > 1;
+        for (int gy = 0; gy < N; ++gy) {
+            for (int gx = 0; gx < N; ++gx) {
+                double px = x0 + (gx + 0.5) / N * (x1 - x0);
+                double py = y1 - (gy + 0.5) / N * (y1 - y0);
+                auto acts = forwardViz(st, {px, py});
+                Vector out = acts.empty() ? Vector{} : acts.back();
+                QColor c;
+                if (multi) {
+                    std::size_t b = 0;
+                    for (std::size_t k = 1; k < out.size(); ++k)
+                        if (out[k] > out[b]) b = k;
+                    c = QColor(kClassColors[b % 6]);
+                } else if (!out.empty()) {
+                    double v = std::max(0.0, std::min(1.0, out[0]));
+                    QColor c0(kClassColors[0]), c1(kClassColors[1]);
+                    c = QColor(int(c0.red() + (c1.red() - c0.red()) * v),
+                               int(c0.green() + (c1.green() - c0.green()) * v),
+                               int(c0.blue() + (c1.blue() - c0.blue()) * v));
+                } else c = QColor(0x09, 0x0A, 0x0F);
+                c = c.darker(320);
+                grid.setPixel(gx, gy, c.rgb());
+            }
+        }
+        // Training points for context (from preview or last datasets).
+        std::vector<QPointF> trP;
+        std::vector<int> trC;
+        auto toCls = [&](const Vector& t) {
+            if (t.size() == 1) return t[0] >= 0.5 ? 1 : 0;
+            std::size_t b = 0;
+            for (std::size_t k = 1; k < t.size(); ++k)
+                if (t[k] > t[b]) b = k;
+            return (int)b;
+        };
+        if (m_preview.train.size() > 0 && m_preview.train.input(0).size() >= 2) {
+            for (std::size_t i = 0; i < m_preview.train.size(); ++i) {
+                trP.push_back(QPointF(m_preview.train.input(i)[0], m_preview.train.input(i)[1]));
+                trC.push_back(toCls(m_preview.train.target(i)));
+            }
+        }
+        m_boundary->setData(std::move(grid), std::move(trP), std::move(trC),
+                            {}, {}, x0, x1, y0, y1, true);
     }
 
     // ---- training control ----
@@ -2512,7 +3314,14 @@ private:
         if (m_state == ST_ERROR) return;
         ExperimentConfig cfg = currentConfig();
         // Fresh curves + cleared result: the new run must not append to stale data.
+        captureVizProbe();
         g_bridge.resetLive();
+        m_viz.clear();
+        m_playIdx = -1;
+        m_playing = false;
+        if (m_playTimer && m_playTimer->isActive()) m_playTimer->stop();
+        m_cVizIdx = -2; m_cFwdPhase = -2; m_cBndIdx = (std::size_t)-1;
+        m_fwdTick = 0;
         m_resultsShownFor = false;
         m_seenSeq = g_bridge.runSeq;
         g_bridge.stopRequested = false;
@@ -2520,53 +3329,82 @@ private:
         if (g_trainThread && g_trainThread->joinable()) g_trainThread->join();
         g_trainThread = std::make_unique<std::thread>([cfg]() {
             ExperimentResult res = ExperimentController::run(cfg, &g_bridge, &g_bridge.stopRequested);
-            std::lock_guard<std::mutex> lock(g_bridge.mtx);
-            if (!res.error.empty()) {
-                g_bridge.lastError = std::string("Error: ") + res.error;
-            } else {
-                char buf[256];
-                std::snprintf(buf, sizeof(buf),
-                              "Train loss %.4f | Train acc %.1f%% | Test acc %.1f%% (%.2fs)%s",
-                              res.trainLoss, res.trainAcc * 100.0, res.testAcc * 100.0,
-                              res.seconds, res.stopped ? " — stopped" : "");
-                g_bridge.summary = buf;
-                g_bridge.hasResult = true;
-                g_bridge.lastCompleted = !res.stopped;
-                g_bridge.lastStopped = res.stopped;
-                g_bridge.lastTrainLoss = res.trainLoss;
-                g_bridge.lastTrainAcc = res.trainAcc;
-                g_bridge.lastValLoss = res.valLoss;
-                g_bridge.lastValAcc = res.valAcc;
-                g_bridge.lastTestLoss = res.testLoss;
-                g_bridge.lastTestAcc = res.testAcc;
-                g_bridge.lastHasVal = res.hasVal;
-                g_bridge.lastWarning = res.warning;
-                g_bridge.lastConfusion = res.confusion;
-                g_bridge.lastNumClasses = res.numClasses;
-                g_bridge.lastHasConfusion = res.hasConfusion;
-                g_bridge.lastArch = describeNet(res.net);
-                g_bridge.lastOptDesc = cfg.optimizer + " lr=" + std::to_string(cfg.opt.learningRate);
-                std::size_t effB = (cfg.batchSize == 0 || cfg.batchSize > res.data.nTrain)
-                    ? res.data.nTrain : cfg.batchSize;
-                g_bridge.lastBatchTxt = (cfg.batchSize == 0 ? std::string("full")
-                    : std::to_string(cfg.batchSize)) + " (eff " + std::to_string(effB) + ")";
-                g_bridge.lastSeed = (int)cfg.seed;
-                g_bridge.lastDsDesc = res.data.name + " " + std::to_string(res.data.samples) + " samples";
-                g_bridge.lastLoss = cfg.loss;
-                if (res.hasNet) {
-                    g_bridge.lastNet = std::make_shared<NeuralNetwork>(res.net);
-                    g_bridge.lastTrain = res.data.train;
-                    g_bridge.lastTest = res.data.test;
-                    g_bridge.lastInDim = res.data.inDim;
-                    g_bridge.lastOutDim = res.data.outDim;
-                    g_bridge.lastEpochsRun = (int)res.history.trainLoss.size();
-                    g_bridge.lastEpochsTarget = cfg.epochs;
-                    g_bridge.lastTiny = res.data.tiny;
-                }
-                g_bridge.runSeq++;
-            }
+            finalizeRun(cfg, res);
             g_bridge.isTraining = false;
         });
+    }
+
+    // Single choke point for post-run bookkeeping, shared by the START and
+    // STEP training paths (previously copy-pasted in both worker lambdas).
+    static void finalizeRun(const ExperimentConfig& cfg, ExperimentResult& res) {
+        std::lock_guard<std::mutex> lock(g_bridge.mtx);
+        if (!res.error.empty()) {
+            g_bridge.lastError = std::string("Error: ") + res.error;
+            return;
+        }
+        if (res.hasTest) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "Train loss %.4f | Train acc %.1f%% | Test acc %.1f%% (%.2fs)%s",
+                          res.trainLoss, res.trainAcc * 100.0, res.testAcc * 100.0,
+                          res.seconds, res.stopped ? " — stopped" : "");
+            g_bridge.summary = buf;
+        } else {
+            // No held-out test set exists: report train metrics only, never
+            // relabel them as test metrics.
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "Train loss %.4f | Train acc %.1f%% (%.2fs)%s — no held-out test set",
+                          res.trainLoss, res.trainAcc * 100.0,
+                          res.seconds, res.stopped ? ", stopped" : "");
+            g_bridge.summary = buf;
+        }
+        g_bridge.hasResult = true;
+        g_bridge.lastCompleted = !res.stopped;
+        g_bridge.lastStopped = res.stopped;
+        g_bridge.lastTrainLoss = res.trainLoss;
+        g_bridge.lastTrainAcc = res.trainAcc;
+        g_bridge.lastValLoss = res.valLoss;
+        g_bridge.lastValAcc = res.valAcc;
+        g_bridge.lastTestLoss = res.testLoss;
+        g_bridge.lastTestAcc = res.testAcc;
+        g_bridge.lastHasVal = res.hasVal;
+        g_bridge.lastHasTest = res.hasTest;
+        g_bridge.lastWarning = res.warning;
+        g_bridge.lastConfusion = res.confusion;
+        g_bridge.lastNumClasses = res.numClasses;
+        g_bridge.lastHasConfusion = res.hasConfusion;
+        g_bridge.lastConfusionOnTrain = res.confusionOnTrain;
+        g_bridge.lastArch = describeNet(res.net);
+        g_bridge.lastOptDesc = cfg.optimizer + " lr=" + std::to_string(cfg.opt.learningRate);
+        std::size_t effB = (cfg.batchSize == 0 || cfg.batchSize > res.data.nTrain)
+            ? res.data.nTrain : cfg.batchSize;
+        g_bridge.lastBatchTxt = (cfg.batchSize == 0 ? std::string("full")
+            : std::to_string(cfg.batchSize)) + " (eff " + std::to_string(effB) + ")";
+        g_bridge.lastSeed = (int)cfg.seed;
+        g_bridge.lastDsDesc = res.data.name + " " + std::to_string(res.data.samples) + " samples";
+        g_bridge.lastLoss = cfg.loss;
+        if (res.hasTest) {
+            char splitBuf[128];
+            std::snprintf(splitBuf, sizeof(splitBuf), "Train %llu | Val %llu | Test %llu",
+                          (unsigned long long)res.data.nTrain, (unsigned long long)res.data.nVal,
+                          (unsigned long long)res.data.nTest);
+            g_bridge.lastSplitTxt = splitBuf;
+        } else {
+            g_bridge.lastSplitTxt = "Train " + std::to_string(res.data.nTrain) +
+                " (full table — no held-out val/test)";
+        }
+        if (res.hasNet) {
+            g_bridge.lastNet = std::make_shared<NeuralNetwork>(res.net);
+            g_bridge.lastTrain = res.data.train;
+            g_bridge.lastTest = res.data.test;
+            g_bridge.lastInDim = res.data.inDim;
+            g_bridge.lastOutDim = res.data.outDim;
+            g_bridge.lastEpochsRun = (int)res.history.trainLoss.size();
+            g_bridge.lastEpochsTarget = cfg.epochs;
+            g_bridge.lastTiny = res.data.tiny;
+        }
+        g_bridge.runSeq++;
     }
 
     static std::string describeNet(const NeuralNetwork& net) {
@@ -2664,6 +3502,51 @@ private:
         } else {
             m_netview->setArch(ArchDesc{});
         }
+        // Append FINAL snapshot so the shared timeline ends at the trained net.
+        {
+            std::vector<VisualizationState> bs;
+            double fL = 0, fA = 0, fVA = 0;
+            bool hasV = false;
+            int epRun = 0;
+            {
+                std::lock_guard<std::mutex> lock(g_bridge.mtx);
+                bs = g_bridge.vizStates;
+                fL = g_bridge.lastTrainLoss; fA = g_bridge.lastTrainAcc;
+                fVA = g_bridge.lastValAcc; hasV = g_bridge.lastHasVal;
+                epRun = g_bridge.lastEpochsRun;
+            }
+            m_viz = std::move(bs);
+            if (net && net->numLayers() > 0 && epRun > 0) {
+                bool need = m_viz.empty() || m_viz.back().epoch != epRun;
+                if (need) {
+                    VisualizationState fin;
+                    fin.epoch = epRun;
+                    fin.trainLoss = (float)fL; fin.trainAcc = (float)fA;
+                    fin.valAcc = (float)fVA; fin.hasVal = hasV;
+                    fin.inDim = net->layers()[0].inputSize();
+                    for (const auto& layer : net->layers()) {
+                        std::vector<std::vector<double>> w;
+                        std::vector<double> b;
+                        std::string an = layer.neurons().empty() ? "?"
+                            : layer.neurons()[0].activation().name();
+                        for (const auto& n : layer.neurons()) {
+                            w.push_back(n.weights());
+                            b.push_back(n.bias());
+                        }
+                        fin.weights.push_back(std::move(w));
+                        fin.biases.push_back(std::move(b));
+                        fin.layerActs.push_back(an);
+                    }
+                    if (m_viz.size() < 2000) m_viz.push_back(std::move(fin));
+                }
+            }
+            m_playIdx = -1;
+            m_playing = false;
+            if (m_playTimer && m_playTimer->isActive()) m_playTimer->stop();
+            m_cVizIdx = -2; m_cFwdPhase = -2; m_cBndIdx = (std::size_t)-1;
+            if (!m_viz.empty() && m_hasVizProbe == false) captureVizProbe();
+            syncPlaybackUi();
+        }
     }
 
     // ---- results dialog (§13) + model save/load (§27) ----
@@ -2692,6 +3575,7 @@ private:
             form->addRow(key, val);
         };
         row("Dataset", QString::fromStdString(g_bridge.lastDsDesc));
+        row("Split", QString::fromStdString(g_bridge.lastSplitTxt));
         row("Architecture", QString::fromStdString(g_bridge.lastArch));
         row("Optimizer", QString::fromStdString(g_bridge.lastOptDesc));
         row("Loss", QString::fromStdString(g_bridge.lastLoss));
@@ -2704,13 +3588,18 @@ private:
             row("Val Loss", QString::asprintf("%.4f", g_bridge.lastValLoss));
             row("Val Acc", QString::asprintf("%.1f%%", g_bridge.lastValAcc * 100.0));
         }
-        row("Test Loss", QString::asprintf("%.4f", g_bridge.lastTestLoss));
-        row("Test Acc", QString::asprintf("%.1f%%", g_bridge.lastTestAcc * 100.0));
-        if (g_bridge.lastTiny)
-            row("Note", QStringLiteral("Tiny dataset: test == train set."));
+        if (g_bridge.lastHasTest) {
+            row("Test Loss", QString::asprintf("%.4f", g_bridge.lastTestLoss));
+            row("Test Acc", QString::asprintf("%.1f%%", g_bridge.lastTestAcc * 100.0));
+        } else {
+            row("Test Loss", QStringLiteral("n/a (no held-out test set)"));
+            row("Test Acc", QStringLiteral("n/a (no held-out test set)"));
+        }
         lay->addLayout(form);
         if (g_bridge.lastHasConfusion && g_bridge.lastNumClasses >= 2 && g_bridge.lastNumClasses <= 10) {
-            auto* cmTitle = new QLabel(QStringLiteral("Confusion matrix (rows = actual, cols = predicted)"));
+            auto* cmTitle = new QLabel(g_bridge.lastConfusionOnTrain
+                ? QStringLiteral("Confusion matrix on the TRAIN set (no held-out test exists)")
+                : QStringLiteral("Confusion matrix on the TEST set (rows = actual, cols = predicted)"));
             cmTitle->setStyleSheet(QStringLiteral("color:#8A90A0;"));
             lay->addWidget(cmTitle);
             std::size_t k = g_bridge.lastNumClasses;
@@ -2879,9 +3768,9 @@ private:
     }
 
     void pushUiFromState() {
-        checkOnly(m_dsBtns, (int)m_dataset);
-        checkOnly(m_lossBtns, (int)m_loss);
-        checkOnly(m_optBtns, (int)m_opt);
+        m_dsGroup.checkOnly((int)m_dataset);
+        m_lossGroup.checkOnly((int)m_loss);
+        m_optGroup.checkOnly((int)m_opt);
         m_outActCombo->blockSignals(true);
         for (int i = 0; i < 6; ++i)
             if (m_outputAct == kOutActKeys[i]) m_outActCombo->setCurrentIndex(i);
@@ -2913,6 +3802,15 @@ private:
         m_shuffleChk->blockSignals(true);
         m_shuffleChk->setChecked(m_shuffle);
         m_shuffleChk->blockSignals(false);
+        m_splitShuffleChk->blockSignals(true);
+        m_splitShuffleChk->setChecked(m_splitShuffle);
+        m_splitShuffleChk->blockSignals(false);
+        m_trainPctSpin->blockSignals(true);
+        m_trainPctSpin->setValue(m_trainPct);
+        m_trainPctSpin->blockSignals(false);
+        m_valPctSpin->blockSignals(true);
+        m_valPctSpin->setValue(m_valPct);
+        m_valPctSpin->blockSignals(false);
         m_normCombo->blockSignals(true);
         m_normCombo->setCurrentIndex(m_normMode);
         m_normCombo->blockSignals(false);
