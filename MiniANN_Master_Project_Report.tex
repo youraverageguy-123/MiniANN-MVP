@@ -1,582 +1,690 @@
 \documentclass[11pt,a4paper]{article}
 
-% ==============================================================================
-% PACKAGES & SYSTEM CONFIGURATION
-% ==============================================================================
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
-\usepackage[margin=0.9in]{geometry}
-\usepackage{amsmath,amssymb,amsfonts}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{tabularx}
-\usepackage{array}
-\usepackage{xcolor}
 \usepackage{listings}
-\usepackage{hyperref}
 \usepackage{tikz}
-\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc, fit, backgrounds}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, calc}
 \usepackage{enumitem}
-\usepackage{fancyhdr}
-\usepackage{tcolorbox}
-\tcbuselibrary{skins,breakable}
+\usepackage{hyperref}
+\usepackage{xcolor}
 
-% ==============================================================================
-% COLOR PALETTE (Modern Slate & Cyan Theme)
-% ==============================================================================
-\definecolor{primary}{RGB}{15, 23, 42}         % Deep Slate / Navy
-\definecolor{secondary}{RGB}{30, 41, 59}       % Slate Surface
-\definecolor{accent}{RGB}{2, 132, 199}         % Cyan Accent (#0284C7)
-\definecolor{accentdark}{RGB}{3, 105, 161}     % Darker Sky
-\definecolor{codebg}{RGB}{248, 250, 252}       % Code block background
-\definecolor{cardbg}{RGB}{241, 245, 249}       % Card background
-\definecolor{bordercol}{RGB}{203, 213, 225}    % Border slate
-\definecolor{darkgreen}{RGB}{16, 185, 129}     % Success Green
-\definecolor{darkamber}{RGB}{217, 119, 6}      % Amber Warning
-\definecolor{darkred}{RGB}{220, 38, 38}        % Error Red
-
-% ==============================================================================
-% HYPERREF SETUP
-% ==============================================================================
 \hypersetup{
     colorlinks=true,
-    linkcolor=accentdark,
-    citecolor=accent,
-    urlcolor=accentdark,
-    pdftitle={MiniANN MVP - Master Technical Project Report},
-    pdfauthor={MiniANN Engineering Team}
+    linkcolor=black,
+    citecolor=black,
+    urlcolor=blue
 }
 
-% ==============================================================================
-% CODE LISTINGS CONFIGURATION
-% ==============================================================================
 \lstset{
     language=C++,
-    basicstyle=\ttfamily\scriptsize,
-    keywordstyle=\color{blue!80!black}\bfseries,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\bfseries\color{blue!70!black},
     stringstyle=\color{red!70!black},
-    commentstyle=\color{green!50!black}\itshape,
+    commentstyle=\itshape\color{green!50!black},
     numbers=left,
     numberstyle=\tiny\color{gray},
     stepnumber=1,
     numbersep=6pt,
-    backgroundcolor=\color{codebg},
     frame=single,
-    framerule=0.6pt,
-    rulecolor=\color{bordercol},
+    framerule=0.5pt,
     tabsize=2,
     breaklines=true,
     breakatwhitespace=false,
     showstringspaces=false
 }
 
-% ==============================================================================
-% TCOLORBOX CALLOUT STYLES
-% ==============================================================================
-\newtcolorbox{infobox}[1][]{
-    enhanced,
-    colback=cardbg,
-    colframe=accent,
-    arc=0mm,
-    boxrule=1pt,
-    title={\textbf{#1}},
-    fonttitle=\sffamily\bfseries\color{white},
-    coltitle=white,
-    colbacktitle=accent,
-    left=8pt, right=8pt, top=6pt, bottom=6pt
-}
-
-\newtcolorbox{metricbox}[1][]{
-    enhanced,
-    colback=white,
-    colframe=secondary,
-    arc=0mm,
-    boxrule=0.8pt,
-    left=6pt, right=6pt, top=4pt, bottom=4pt,
-    fontupper=\small
-}
-
-% ==============================================================================
-% HEADER & FOOTER CONFIGURATION
-% ==============================================================================
-\pagestyle{fancy}
-\setlength{\headheight}{18pt}
-\fancyhf{}
-\lhead{\textsf{\textbf{MiniANN MVP}} \textbar\ Comprehensive Master Technical Report}
-\rhead{\textsf{C++20 OOP Neural Network Engine \& Workbench}}
-\cfoot{\thepage}
-
-% ==============================================================================
-% DOCUMENT CONTENT
-% ==============================================================================
 \begin{document}
 
-% --- TITLE PAGE / HEADER ---
 \begin{center}
-    {\Huge \textsf{\textbf{MiniANN MVP: Master Technical Report}}}\\[6pt]
-    {\Large \textsf{\textbf{An Object-Oriented Feedforward Neural Network Engine \& Workbench in C++20}}}\\[8pt]
-    {\normalsize \textbf{MiniANN Engineering Team} \quad \textbar \quad Final Project Capstone Submission}\\[4pt]
-    {\small \textsf{Repository Branch: \texttt{p2} \quad \textbar \quad Standard: ISO/IEC C++20 \quad \textbar \quad Zero ML Dependencies}}\\[12pt]
-    \rule{\linewidth}{1.2pt}
+    {\LARGE \textbf{MiniANN: C++ Artificial Neural Network Library}}\\[6pt]
+    {\large \textbf{Project Report --- Architecture, Features, OOP Mapping and UML Diagrams}}\\[10pt]
+    {\normalsize \textbf{MiniANN Project (Problem Statement 5, Spec v1.3)}}\\[6pt]
+    {\normalsize October 4, 2026}
 \end{center}
 
-\begin{abstract}
-\noindent
-\textbf{MiniANN MVP} is a complete, production-grade Artificial Neural Network (ANN) simulation framework and interactive laboratory application written from scratch in modern C++20. Designed under the strict pedagogical constraint of \textbf{zero external machine learning or linear algebra libraries} (e.g., no PyTorch, TensorFlow, Eigen, or BLAS), the system implements complete forward propagation, analytic backpropagation, gradient verification, multiple optimization strategies, regularization mechanics, and dataset preprocessing natively. Built alongside the core engine is an interactive desktop workbench implemented using Qt6, featuring asynchronous worker threading, live parameter streaming, real-time loss/accuracy charting, 2D decision boundary visualization, and feedforward network state inspection. This report serves as the definitive reference for the project, detailing system architecture, object-oriented design patterns, mathematical formulations, end-to-end execution traces, automated test suites, and UI/UX engineering.
-\end{abstract}
-
-\vspace{0.5em}
-\tableofcontents
 \vspace{1em}
-\hrule
-\vspace{1.5em}
+\noindent
+\textbf{What this report is.} A self-contained technical report on the MiniANN codebase:
+what it does, how it is organised, which features it provides, and --- in detail --- where
+each Object-Oriented Programming (OOP) concept is used (with file references and
+class names). UML-style class diagrams are drawn directly in \LaTeX\ with TikZ so the
+document compiles with a plain \texttt{pdflatex} installation. A complete concrete mathematical trace for one training dry run is detailed, and recent system extensions (including the RMSprop optimiser, ELU activation, $L_2$ weight decay, gradient norm clipping, and the interactive 3D OpenGL Network Viewer) are fully documented.
+
+\vspace{1em}
+\tableofcontents
+\newpage
 
 % ==============================================================================
-% SECTION 1: EXECUTIVE SUMMARY & PROBLEM STATEMENT
+% SECTION 1: PROJECT OVERVIEW
 % ==============================================================================
-\section{Executive Summary \& Problem Statement}
+\section{Project Overview}
 
-Modern machine learning education and engineering often suffer from high levels of abstraction. While libraries like PyTorch or TensorFlow allow rapid prototyping, they obscure the low-level computational mechanics, numerical stability challenges, memory layout trade-offs, and software design patterns that underpin artificial neural networks.
+MiniANN is a modular, lightweight feed-forward Artificial Neural Network framework written from scratch in modern C++17/C++20. It deliberately uses no PyTorch, TensorFlow, Eigen, BLAS, or plotting libraries. The goal is architectural clarity, strict encapsulation, and clean object-oriented design --- not raw execution speed.
 
-The \textbf{MiniANN MVP} project addresses this by developing an end-to-end neural network engine and visualization workbench adhering to the following core tenets:
-\begin{itemize}[leftmargin=1.5em, itemsep=2pt]
-    \item \textbf{Complete First-Principles Implementation:} Every component---from neuron dot-products and analytic activation derivatives to backpropagation chain rule computations and momentum buffers---is implemented natively in C++ standard library structures (\texttt{std::vector<double>}).
-    \item \textbf{Exemplary Object-Oriented Design:} The architecture rigorously adheres to the SOLID principles, leveraging nine foundational GoF design patterns (Factory, Strategy, Observer, Visitor, Composite, Chain of Responsibility, Façade, Bridge, Memento) to guarantee modularity, maintainability, and loose coupling.
-    \item \textbf{Verifiable Mathematical Correctness:} Analytic backpropagation gradients are verified against centered finite-difference approximations via an automated gradient checker ensuring relative errors remain below $10^{-7}$.
-    \item \textbf{Real-Time Interactive Telemetry:} A zero-latency, multi-threaded GUI provides dynamic real-time visualization of loss curves, accuracy trajectories, confusion matrices, 2D decision boundaries, and node weight magnitudes without blocking training execution.
+A user can:
+\begin{enumerate}[itemsep=2pt]
+    \item construct arbitrary layer topologies as \texttt{NeuralNetwork} $\to$ \texttt{Layer} $\to$ \texttt{Neuron},
+    \item swap mathematical pieces at runtime through pure-virtual interfaces (\texttt{IActivation}, \texttt{ILoss}, \texttt{IOptimizer}, \texttt{IMetric}, \texttt{ILogger}, \texttt{IVisualizer}, \texttt{ILRScheduler}),
+    \item train with mini-batch backpropagation (\texttt{Trainer::fit}) using Xavier/He initialisation, with support for $L_2$ weight decay, gradient norm clipping, and learning rate scheduling,
+    \item load data from built-in logic gates or CSV files (\texttt{Dataset::loadCSV}, train/validation/test splits),
+    \item evaluate binary and multi-class problems (threshold rule for one output, argmax otherwise, per-class precision/recall/F1),
+    \item persist models as human-readable text (\texttt{MINIANN 1/2} format, 17-digit IEEE-754 precision),
+    \item export loss curves and self-contained HTML reports with SVG charts,
+    \item inspect network operations in real time through an interactive desktop workbench featuring both 2D analytics and a hardware-accelerated 3D OpenGL Network Viewer,
+    \item prove correctness with gradient checks, serialisation round-trips, and AND/OR/XOR + Iris demos.
+\end{enumerate}
+
+Spec version: \textbf{1.3 / Problem Statement 5}. Language standard: \textbf{C++17/C++20} with \texttt{-Wall -Wextra -Wpedantic}, no raw \texttt{new}/\texttt{delete}, const-correctness, and the naming convention PascalCase classes / I-prefixed interfaces / camelCase methods / trailing \texttt{\_} members.
+
+\subsection{Design rules enforced by the codebase}
+\begin{itemize}[itemsep=2pt]
+    \item \texttt{derivative(z)} takes the pre-activation $z$, not the output $a$.
+    \item \texttt{Neuron::backward()} accumulates (\texttt{+=}); gradients are zeroed once per batch via \texttt{zeroGradients()}.
+    \item \texttt{Layer::backward()} reads weights before the optimiser step.
+    \item Serialiser tags (\texttt{sigmoid}, \texttt{tanh}, \texttt{relu}, \texttt{leaky\_relu}, \texttt{swish}, \texttt{elu}, \texttt{linear}, \texttt{softmax}) match \texttt{ActivationFactory::create()} exactly.
+    \item The network never trains itself; \texttt{Trainer} + \texttt{IOptimizer} own mutation.
 \end{itemize}
 
-% ==============================================================================
-% SECTION 2: END-TO-END SYSTEM ARCHITECTURE
-% ==============================================================================
-\section{End-to-End System Architecture}
+\subsection{Directory layout}
+\begin{lstlisting}
+MiniANN_MVP/
+  CMakeLists.txt            # miniann lib + demos + tests + optional Qt GUI
+  build.bat / build.ps1     # Native g++ build scripts (two-stage: lib once)
+  README.md docs/           # Technical architecture specifications
+  include/miniann/          # Frozen interface contracts (headers)
+    types.hpp               # Vector, Matrix aliases
+    activation.hpp          # IActivation x8 + ActivationFactory
+    neuron.hpp              # Neuron, WeightInit, gradWeights/gradBias
+    layer.hpp               # Layer container, joint-softmax path
+    network.hpp             # NeuralNetwork container, visitor traversal
+    loss.hpp                # ILoss x3 + LossFactory
+    optimizer.hpp           # IOptimizer x4 + OptimizerFactory + OptimizerConfig
+    trainer.hpp             # TrainingConfig, TrainingHistory, Trainer
+    scheduler.hpp           # ILRScheduler x3 + LRSchedulerFactory
+    dataset.hpp             # Dataset container, splitTrainValTest
+    preprocessing.hpp       # normalizeMaxAbs, oneHotEncode
+    normalize.hpp           # INormalizer x3 + NormalizerFactory
+    validate.hpp            # IValidator + CompositeValidator
+    metrics.hpp             # IMetric, Accuracy, ConfusionMatrix
+    logger.hpp              # LogLevel, ILogger, ConsoleLogger, FileLogger
+    serializer.hpp          # ModelSerializer, CSVLossExporter
+    visualizer.hpp          # IVisualizer x6 + LiveConsole + HtmlReport
+    report.hpp              # ConfigSection, SummarySection, HtmlReportBuilder
+    datasource.hpp          # IDatasetSource x5 + ITargetSelector chain
+    experiment.hpp          # ExperimentConfig, PreparedData, Controller
+    cli.hpp                 # Header-only CLI parsing
+    miniann.hpp             # Single umbrella include
+  src/                      # One .cpp implementation per header
+  demos/                    # CLI demos and visualizers
+    xor_demo.cpp and_or_demo.cpp iris_demo.cpp compare_demo.cpp
+    playground.cpp early_stop_demo.cpp gui_qt.cpp
+    network3d/              # 3D OpenGL Network Viewer module
+      network3d_widget.hpp/.cpp camera3d.hpp layout3d.hpp edge_budget.hpp
+  tests/                    # Automated unit & integration verification
+    test_basic.cpp test_choices.cpp gradient_check.cpp
+    test_training.cpp test_correctness.cpp test_callbacks.cpp
+    test_patterns.cpp test_viz3d_math.cpp
+  data/                     # Synthetic and benchmark datasets (iris_small.csv)
+\end{lstlisting}
 
-\subsection{Architectural Pipeline Flow}
-The application follows a strictly layered, unidirectional pipeline architecture. The separation between data ingestion, model representation, training execution, and visualization ensures that the computational engine remains completely decoupled from the presentation layer.
+% ==============================================================================
+% SECTION 2: OBJECTIVES AND SCOPE
+% ==============================================================================
+\section{Objectives and Scope}
 
-\begin{figure}[htbp]
-\centering
+\subsection{Objectives}
+\begin{enumerate}[itemsep=2pt]
+    \item Provide a readable, from-scratch neural-network implementation in which every backpropagation step is explicit (explicit loops, cached \texttt{lastInputs\_}/\texttt{lastZ\_}).
+    \item Demonstrate textbook OOP: abstraction, inheritance, polymorphism, encapsulation, composition, plus the Strategy, Observer, Factory, Builder, Chain-of-Responsibility, Visitor, Composite, Fa\c{c}ade, and Memento patterns.
+    \item Support real experiments without editing C++: CLI flags, an interactive REPL playground, CSV ingestion, and an interactive Qt GUI with 2D analytics and 3D spatial rendering over the same engine.
+    \item Make every claim verifiable: gradient check (finite differences with relative error $< 10^{-7}$), serialisation round-trip, deterministic splits, and loss/accuracy artefacts (CSV + HTML).
+\end{enumerate}
+
+\subsection{Out of scope (by design)}
+Convolutional/recurrent networks, GPU execution, and dynamic autograd graphs. The framework concentrates on feed-forward multi-layer perceptrons, transparent dense backpropagation, and rigorous architectural design.
+
+% ==============================================================================
+% SECTION 3: SYSTEM ARCHITECTURE
+% ==============================================================================
+\section{System Architecture}
+
+MiniANN is organised as a clean three-tier system:
+
+\begin{center}
 \begin{tikzpicture}[
-    node distance=1.0cm and 1.2cm,
-    block/.style={rectangle, draw=primary, fill=cardbg, thick, minimum width=2.8cm, minimum height=1.0cm, align=center, font=\sffamily\footnotesize},
-    accentblock/.style={rectangle, draw=accent, fill=white, very thick, minimum width=3.0cm, minimum height=1.0cm, align=center, font=\sffamily\footnotesize\bfseries},
-    arrow/.style={-Latex, thick, color=primary}
+    box/.style={draw, rectangle, minimum width=12cm, align=left, font=\small},
+    arrow/.style={-Latex, thick}
 ]
-    % Pipeline Nodes
-    \node[block] (source) {1. Data Ingestion\\(\texttt{IDataSource}, CSV/Builtin)};
-    \node[block, right=of source] (prep) {2. Preprocessing\\(\texttt{Dataset}, Normalizer)};
-    \node[accentblock, right=of prep] (facade) {3. Façade Controller\\(\texttt{ExperimentController})};
-    \node[block, below=of facade] (model) {4. Core Model\\(\texttt{NeuralNetwork}, \texttt{Layer})};
-    \node[block, left=of model] (trainer) {5. Optimization\\(\texttt{Trainer}, \texttt{IOptimizer})};
-    \node[block, left=of trainer] (bridge) {6. Thread Bridge\\(\texttt{LiveBridge}, Ring Buffer)};
-    \node[accentblock, below=of trainer] (ui) {7. Interactive GUI\\(\texttt{MainWindow}, Canvases)};
+    \node[box] (tier1) {
+        \textbf{Tier 1 --- Core mathematics library (\texttt{miniann::miniann})}\\[2pt]
+        \texttt{NeuralNetwork, Layer, Neuron} \quad \texttt{IActivation} (8 impls) \quad \texttt{ILoss} (3 impls)\\
+        \texttt{IOptimizer} (4 impls) \quad \texttt{Dataset} \quad \texttt{IMetric} \quad \texttt{ILogger} \quad \texttt{ModelSerializer}
+    };
+    \node[box, below=0.6cm of tier1] (tier2) {
+        \textbf{Tier 2 --- Experiment pipeline}\\[2pt]
+        \texttt{Trainer + TrainingCallback} \quad \texttt{ExperimentController}\\
+        \texttt{IDatasetSource / TargetSelectorChain} \quad \texttt{IVisualizer / HtmlReport}\\
+        \texttt{CompositeValidator} \quad \texttt{INormalizer} \quad \texttt{ILRScheduler}
+    };
+    \node[box, below=0.6cm of tier2] (tier3) {
+        \textbf{Tier 3 --- Front-ends (all use Tier 1 + Tier 2, never duplicate math)}\\[2pt]
+        \texttt{xor\_demo} (CLI) \quad \texttt{and\_or\_demo} \quad \texttt{iris\_demo} \quad \texttt{compare\_demo}\\
+        \texttt{playground} (REPL) \quad \texttt{gui\_qt} (Qt Widgets + 3D OpenGL Viewer) \quad \texttt{tests}
+    };
 
-    % Arrows
-    \draw[arrow] (source) -- (prep);
-    \draw[arrow] (prep) -- (facade);
-    \draw[arrow] (facade) -- (model);
-    \draw[arrow] (model) -- (trainer);
-    \draw[arrow] (trainer) -- (bridge);
-    \draw[arrow] (bridge) |- (ui);
-    \draw[arrow] (facade) -- ++(3.2,0) |- (ui);
+    \draw[arrow] (tier2) -- (tier1);
+    \draw[arrow] (tier3) -- (tier2);
 \end{tikzpicture}
-\caption{MiniANN End-to-End System Pipeline and Component Interaction}
-\label{fig:pipeline}
-\end{figure}
+\end{center}
 
-\subsection{Pipeline Execution Stages}
-\begin{enumerate}[leftmargin=1.8em, itemsep=3pt]
-    \item \textbf{Ingestion Stage:} Raw data is read from disk or built-in synthetics via \texttt{IDataSource}. A Chain of Responsibility resolves label column ambiguities.
-    \item \textbf{Validation \& Normalization Stage:} The dataset is validated using \texttt{CompositeValidator} (checking for NaNs, dimension mismatches, class degeneracies) and normalized using an \texttt{INormalizer} strategy (Z-Score or MinMax).
-    \item \textbf{Construction Stage:} The network topology is assembled via \texttt{NeuralNetwork}, composing \texttt{Layer} containers populated by \texttt{Neuron} units initialized with Xavier/He weight distributions.
-    \item \textbf{Training Stage:} \texttt{Trainer} executes forward and backward passes over mini-batches. Optimizers (\texttt{SGD}, \texttt{Momentum}, \texttt{Adam}, \texttt{RMSprop}) update weights, modulated by learning rate schedulers, $L_2$ weight decay, and gradient clipping.
-    \item \textbf{Observer Telemetry Stage:} During each epoch, an \texttt{ICallback} chain logs metrics, enforces early stopping, and posts atomic snapshots to \texttt{LiveBridge}.
-    \item \textbf{Rendering \& Export Stage:} The Qt GUI worker consumes snapshots asynchronously, redrawing canvas widgets, while \texttt{Serializer} and report exporters generate standalone persistence artifacts.
+\noindent
+\textbf{Ownership rule:} \texttt{NeuralNetwork} owns forward/backward chaining only. \texttt{Trainer} + \texttt{IOptimizer} own the training policy and parameter mutation. \texttt{Dataset} owns data. \texttt{ILoss} / \texttt{IActivation} / \texttt{IMetric} / \texttt{ILogger} are pure interfaces. The UI never constructs datasets, networks, losses, or optimisers directly; it populates one \texttt{ExperimentConfig} and hands it to \texttt{ExperimentController}.
+
+\subsection{Training pipeline (six steps)}
+\begin{enumerate}[itemsep=2pt]
+    \item \textbf{Data:} \texttt{Dataset::validate()} (dimensions, NaN/Inf), optional deterministic splitting (\texttt{splitTrainValTest()}); normalisation strategies via \texttt{INormalizer} and polymorphic sourcing via \texttt{IDatasetSource}.
+    \item \textbf{Build:} \texttt{NeuralNetwork} assembles \texttt{Layer} objects of \texttt{Neuron} units; \texttt{ActivationFactory::create(name)} supplies the non-linearity; initialisation strategies apply He or Xavier limits.
+    \item \textbf{Train:} \texttt{Trainer::fit()}: shuffle with mt19937 seed, mini-batch partition, per-batch \texttt{zeroGradients()}, per-sample \texttt{predict} $\to$ \texttt{loss.gradient()} $\to$ \texttt{backward()} (accumulates \texttt{gradW += delta*a}).
+    \item \textbf{Regularise \& Clip:} Add $L_2$ penalty to weight gradients ($\mathbf{g}_W \mathrel{+}= \lambda \mathbf{W}$) and rescale global gradient norm if $\|g\|_2 > g_{\max}$.
+    \item \textbf{Optimise:} Execute \texttt{optimizer.step(net, B)} with learning rate scheduling.
+    \item \textbf{Evaluate \& Persist:} Compute accuracy and confusion matrices; stream metrics to observers; persist weights via \texttt{ModelSerializer} or export standalone HTML reports.
 \end{enumerate}
 
 % ==============================================================================
-% SECTION 3: OBJECT-ORIENTED PROGRAMMING (OOP) IMPLEMENTATION
+% SECTION 4: FEATURES IN DETAIL
 % ==============================================================================
-\section{Object-Oriented Programming (OOP) Implementation}
+\section{Features in Detail}
 
-The MiniANN codebase was engineered as a benchmark of modern object-oriented software design. Below is a comprehensive breakdown of how OOP fundamentals and design patterns are utilized across the architecture.
+\subsection{Network construction}
+Networks are composed, not inherited: \texttt{NeuralNetwork} holds \texttt{std::vector<Layer>}, and each \texttt{Layer} holds \texttt{std::vector<Neuron>}. Topology dimensions are strictly validated; invalid layer dimensions throw \texttt{std::invalid\_argument}. Hidden layers accept a \texttt{fanOut} parameter to scale Xavier/He variance limits accurately.
 
-\subsection{Core OOP Pillars in MiniANN}
-\begin{itemize}[leftmargin=1.5em, itemsep=4pt]
-    \item \textbf{Encapsulation:} All mathematical states (weights, biases, cached net inputs $z$, outputs $a$, and accumulated gradients) are declared \texttt{private} within \texttt{Neuron} and \texttt{Layer}. Access is granted solely through well-defined accessor and mutator methods, preserving internal invariants.
-    \item \textbf{Abstraction:} High-level training routines depend strictly on abstract interface contracts (\texttt{IActivation}, \texttt{IOptimizer}, \texttt{ILoss}, \texttt{INormalizer}, \texttt{ICallback}). The training engine operates without knowledge of concrete mathematical formulas.
-    \item \textbf{Polymorphism:} Dynamic dispatch is executed through pure virtual interfaces. Activation computations, optimization steps, and callback hooks are resolved at runtime without monolithic conditional branching.
-    \item \textbf{Inheritance \& Interface Segregation:} MiniANN enforces shallow inheritance trees with virtual destructors. Interface contracts are focused and minimal, ensuring clients are not forced to implement unused methods.
+\subsection{Activation functions (8)}
+\texttt{IActivation} declares \texttt{activate(z)}, \texttt{derivative(z)} (at pre-activation $z$), \texttt{name()}, and \texttt{isVector()} (false except Softmax). Concrete classes:
+\begin{itemize}[itemsep=1pt]
+    \item \textbf{Sigmoid:} $\sigma(z) = \frac{1}{1 + e^{-z}}$, with derivative $\sigma(z)(1 - \sigma(z))$.
+    \item \textbf{Tanh:} $\tanh(z) = \frac{e^z - e^{-z}}{e^z + e^{-z}}$, with derivative $1 - \tanh^2(z)$.
+    \item \textbf{ReLU:} $\max(0, z)$, with derivative $1$ for $z > 0$, $0$ otherwise.
+    \item \textbf{LeakyReLU:} $\max(\alpha z, z)$ with validated $\alpha \in (0, 1)$, default $0.01$.
+    \item \textbf{Swish:} $z \cdot \sigma(z)$, with smooth analytic derivative $\sigma(z) + z\sigma(z)(1 - \sigma(z))$.
+    \item \textbf{ELU (Exponential Linear Unit):} $z$ for $z > 0$, and $\alpha(e^z - 1)$ for $z \le 0$ ($\alpha = 1.0$), avoiding dying neurons by allowing negative saturation.
+    \item \textbf{Linear:} $f(z) = z$, $f'(z) = 1$ for regression output heads.
+    \item \textbf{Softmax:} Joint stable operator $\frac{e^{z_i - \max(z)}}{\sum e^{z_j}}$ evaluated at layer level with Jacobian backpropagation.
 \end{itemize}
 
-\subsection{Design Patterns Matrix}
+\subsection{Loss functions (3)}
+\texttt{ILoss} declares \texttt{compute(pred, target)} and \texttt{gradient(pred, target)}.
+\begin{itemize}[itemsep=1pt]
+    \item \textbf{MSELoss:} Mean Squared Error $\frac{1}{2n}\sum (y_i - \hat{y}_i)^2$, default for regression and general heads.
+    \item \textbf{BCELoss:} Binary Cross-Entropy with numerical clamping $[\epsilon, 1-\epsilon]$, rejecting multi-output targets.
+    \item \textbf{CCELoss:} Categorical Cross-Entropy for one-hot multi-class classification, ensuring proper probability penalisation.
+\end{itemize}
+
+\subsection{Optimisers (4)}
+\texttt{IOptimizer} declares \texttt{step(net, batchSize)}, \texttt{visit(visitor)}, and \texttt{name()}.
+\begin{itemize}[itemsep=1pt]
+    \item \textbf{SGD:} Standard mini-batch gradient descent $\theta \leftarrow \theta - \frac{\eta}{B} g$.
+    \item \textbf{Momentum:} Classical momentum maintaining velocity buffer $v \leftarrow \mu v - \frac{\eta}{B} g$.
+    \item \textbf{Adam:} Adaptive moment estimation tracking first ($m_t$) and second ($v_t$) moments with bias correction $\hat{m}_t, \hat{v}_t$.
+    \item \textbf{RMSprop:} Exponentially decaying average of squared gradients $v_t \leftarrow \alpha v_{t-1} + (1-\alpha)g_t^2$, dividing updates by $\sqrt{v_t + \epsilon}$.
+\end{itemize}
+
+\subsection{Training engine \& regularisation}
+\texttt{Trainer::fit()} manages the epoch loop. Key capabilities include:
+\begin{itemize}[itemsep=1pt]
+    \item \textbf{$L_2$ Weight Decay:} Adds $\lambda \mathbf{W}$ to gradients prior to optimiser step to penalise large weights.
+    \item \textbf{Gradient Norm Clipping:} Computes total Frobenius norm $\|g\|_2 = \sqrt{\sum \|g_W\|_F^2 + \sum \|g_b\|_2^2}$ and rescales gradients if $\|g\|_2 > g_{\max}$.
+    \item \textbf{Learning Rate Schedulers:} Modulates $\eta$ per epoch using \texttt{StepLR} or \texttt{ExponentialLR}.
+\end{itemize}
+
+\subsection{Datasets and preprocessing}
+\texttt{Dataset} stores parallel inputs and targets. Supports CSV ingestion (\texttt{Dataset::loadCSV}), RFC-4180 parsing, and deterministic 3-way partitioning (\texttt{splitTrainValTest}). Preprocessing includes \texttt{ZScoreNormalizer}, \texttt{MinMaxNormalizer}, and one-hot target encoding.
+
+\subsection{Metrics, persistence and export}
+\begin{itemize}[itemsep=1pt]
+    \item \textbf{Metrics:} \texttt{Accuracy} and \texttt{ConfusionMatrix} providing per-class precision, recall, and F1-score.
+    \item \textbf{Persistence:} \texttt{ModelSerializer} writes human-readable \texttt{MINIANN 1/2} formats at 17-digit precision, capturing layer topology, weights, and optimiser momentum states.
+    \item \textbf{Export:} \texttt{CSVLossExporter} exports training trajectories; \texttt{HtmlReportBuilder} generates standalone interactive HTML reports with inline SVG charts.
+\end{itemize}
+
+\subsection{Interactive 2D \& 3D visual front-ends}
+\begin{itemize}[itemsep=1pt]
+    \item \textbf{CLI Demos:} \texttt{xor\_demo}, \texttt{and\_or\_demo}, \texttt{iris\_demo}, \texttt{compare\_demo}, and the interactive REPL \texttt{playground}.
+    \item \textbf{Qt6 Workbench (\texttt{gui\_qt}):} Real-time training dashboard with loss curves, accuracy plots, decision boundary heatmaps, confusion matrix modal, and dataset partition cards.
+    \item \textbf{3D OpenGL Network Viewer:} Integrated hardware-accelerated 3D visualisation module (\texttt{Network3DWidget}) with interactive orbit/pan/zoom camera, dynamic edge magnitude thresholding, layer focus isolation, and individual neuron picking.
+\end{itemize}
+
+% ==============================================================================
+% SECTION 5: TECHNOLOGY AND BUILD
+% ==============================================================================
+\section{Technology and Build}
+
+\begin{itemize}[itemsep=2pt]
+    \item \textbf{Language Standard:} ISO C++17 / C++20, standard library only for core engine.
+    \item \textbf{Compiler Support:} MSYS2 UCRT64 / MinGW g++ 13+, Clang, and MSVC.
+    \item \textbf{Build Orchestration:} Two-stage native compilation via \texttt{build.bat} / \texttt{build.ps1} (compiles core object files into \texttt{obj/} once, then incrementally links targets). CMake 3.14+ build configuration also provided.
+    \item \textbf{Quality Gates:} Zero compiler warnings with \texttt{-Wall -Wextra -Wpedantic}, memory safety via RAII, and verified numeric stability.
+\end{itemize}
+
+\newpage
+% ==============================================================================
+% SECTION 6: MODULE REFERENCE
+% ==============================================================================
+\section{Module Reference (File by File)}
+
 \begin{table}[htbp]
-\centering
 \small
-\begin{tabularx}{\textwidth}{l p{3.6cm} X}
+\centering
+\begin{tabularx}{\textwidth}{llX}
 \toprule
-\textbf{Pattern} & \textbf{Component / Class} & \textbf{Architectural Justification \& Benefit} \\
+\textbf{Header} & \textbf{Key Types} & \textbf{Architectural Role} \\
 \midrule
-\textbf{Factory} & \texttt{ActivationFactory}, \texttt{OptimizerFactory}, \texttt{LossFactory}, \texttt{NormalizerFactory} & Decouples object instantiation from business logic. Allows string-based configuration from GUI without leaking concrete types. \\
-\addlinespace
-\textbf{Strategy} & \texttt{IOptimizer} (\texttt{SGD}, \texttt{Adam}, \texttt{RMSprop}), \texttt{INormalizer}, \texttt{ILRScheduler} & Encapsulates interchangeable algorithms within standard interfaces. Enables swapping optimization or normalization mechanics at runtime. \\
-\addlinespace
-\textbf{Observer} & \texttt{ICallback}, \texttt{EarlyStoppingCallback}, \texttt{LiveBridgeCallback} & Implements decoupled event listening. Training engine broadcasts epoch metrics without coupling to console logs or GUI widgets. \\
-\addlinespace
-\textbf{Visitor} & \texttt{INetworkVisitor}, \texttt{WeightDecayVisitor}, \texttt{NeuronInspectorVisitor} & Separates operations from object structures. Allows inspecting or modifying network hierarchies without polluting \texttt{Neuron} classes. \\
-\addlinespace
-\textbf{Composite} & \texttt{CompositeValidator}, \texttt{CallbackList} & Treats individual objects and compositions uniformly. Aggregates multiple dataset sanity checks or training callbacks into single execution nodes. \\
-\addlinespace
-\textbf{Chain of Resp.} & \texttt{TargetSelectorChain} & Decouples request sender from receivers. Successively analyzes dataset column headers and value distributions to auto-detect classification labels. \\
-\addlinespace
-\textbf{Façade} & \texttt{ExperimentController} & Provides a high-level, unified interface over ingestion, validation, initialization, training, and evaluation subsystems. \\
-\addlinespace
-\textbf{Bridge} & \texttt{LiveBridge} & Decouples background thread producer execution from Qt GUI consumer rendering via mutex-guarded ring buffers and atomics. \\
-\addlinespace
-\textbf{Memento} & \texttt{Serializer} & Captures and restores network state vectors (weights, biases, layer configurations) without violating object encapsulation. \\
+\texttt{types.hpp} & \texttt{Vector}, \texttt{Matrix} & Standard type aliases over \texttt{std::vector<double>} \\
+\texttt{activation.hpp} & \texttt{IActivation}, 8 impls, \texttt{ActivationFactory} & Non-linear activation functions and derivatives \\
+\texttt{neuron.hpp} & \texttt{Neuron}, \texttt{WeightInit} & Weight/bias state, forward/backward accumulation \\
+\texttt{layer.hpp} & \texttt{Layer} & Layer container, Xavier initialisation, softmax routing \\
+\texttt{network.hpp} & \texttt{NeuralNetwork} & Network container, forward/backward chaining, visitor \\
+\texttt{loss.hpp} & \texttt{ILoss}, 3 impls, \texttt{LossFactory} & Loss functions and analytic output gradients \\
+\texttt{optimizer.hpp} & \texttt{IOptimizer}, 4 impls, \texttt{OptimizerFactory} & Weight update policies (SGD, Momentum, Adam, RMSprop) \\
+\texttt{trainer.hpp} & \texttt{Trainer}, \texttt{TrainingConfig}, \texttt{TrainingHistory} & Mini-batch training loop, $L_2$ decay, gradient clipping \\
+\texttt{scheduler.hpp} & \texttt{ILRScheduler}, 3 impls, factory & Dynamic learning rate schedule policies \\
+\texttt{dataset.hpp} & \texttt{Dataset}, logic gate makers & In-memory data store, CSV parsing, 3-way splits \\
+\texttt{normalize.hpp} & \texttt{INormalizer}, \texttt{ZScore}, \texttt{MinMax} & Feature normalisation strategies \\
+\texttt{validate.hpp} & \texttt{IValidator}, \texttt{CompositeValidator} & Pre-flight dataset validation rules \\
+\texttt{metrics.hpp} & \texttt{IMetric}, \texttt{Accuracy}, \texttt{ConfusionMatrix} & Evaluation metrics, multi-class performance statistics \\
+\texttt{logger.hpp} & \texttt{ILogger}, \texttt{ConsoleLogger}, \texttt{FileLogger} & Decoupled logging abstractions \\
+\texttt{serializer.hpp} & \texttt{ModelSerializer}, \texttt{CSVLossExporter} & Binary/text model persistence and CSV exporting \\
+\texttt{visualizer.hpp} & \texttt{IVisualizer}, 6 impls, \texttt{HtmlReport} & Text/SVG terminal visualisers and HTML reporters \\
+\texttt{report.hpp} & \texttt{ConfigSection}, \texttt{SummarySection}, builder & Fluent builder for standalone HTML experiment reports \\
+\texttt{datasource.hpp} & \texttt{IDatasetSource}, \texttt{TargetSelectorChain} & Polymorphic data sources and label election chain \\
+\texttt{experiment.hpp} & \texttt{ExperimentConfig}, \texttt{ExperimentController} & Unified Fa\c{c}ade controller linking UI to engine \\
+\texttt{network3d\_widget} & \texttt{Network3DWidget}, \texttt{Camera3D}, \texttt{Layout3D} & Hardware-accelerated 3D OpenGL network renderer \\
 \bottomrule
 \end{tabularx}
-\caption{Summary of GoF Design Patterns Implemented in MiniANN MVP}
-\label{tab:patterns}
+\caption{MiniANN Module Reference and Responsibilities}
 \end{table}
 
 % ==============================================================================
-% SECTION 4: DETAILED UML CLASS DIAGRAMS
+% SECTION 7: OOP IN MINIANN - CONCEPT-BY-CONCEPT MAPPING
 % ==============================================================================
-\section{UML Class Diagrams}
+\section{OOP in MiniANN --- Concept-by-Concept Mapping}
 
-\subsection{Core Domain Hierarchy (Model \& Activation)}
+Table 1 provides a comprehensive summary mapping core OOP principles and GoF design patterns directly to their concrete implementations in the MiniANN codebase.
+
+\begin{table}[htbp]
+\scriptsize
+\centering
+\begin{tabularx}{\textwidth}{l p{4.5cm} X}
+\toprule
+\textbf{Pillar / Pattern} & \textbf{Code Location} & \textbf{Mechanism \& Implementation Details} \\
+\midrule
+\textbf{Abstraction} & \texttt{activation.hpp:10}, \texttt{loss.hpp:9}, \texttt{optimizer.hpp:10}, \texttt{trainer.hpp:31}, \texttt{datasource.hpp:75} & Pure-virtual interfaces (\texttt{activate}, \texttt{compute}, \texttt{step}, \texttt{onEpoch}, \texttt{load}). Consumers program strictly to interface contracts. \\
+\addlinespace
+\textbf{Inheritance} & \texttt{Sigmoid}, \texttt{Tanh}, \texttt{ELU} : \texttt{IActivation}; \texttt{SGD}, \texttt{Adam}, \texttt{RMSprop} : \texttt{IOptimizer}; \texttt{MSELoss} : \texttt{ILoss} & Public interface inheritance establishing clear is-a relationships across all mathematical and operational families. \\
+\addlinespace
+\textbf{Polymorphism} & \texttt{optimizer->step()}, \texttt{loss->gradient()}, \texttt{act->derivative()}, \texttt{visual->render()} & Dynamic runtime dispatch via vtables; factories return base pointers manipulated without knowledge of concrete types. \\
+\addlinespace
+\textbf{Encapsulation} & \texttt{Neuron}, \texttt{Layer}, \texttt{NeuralNetwork}, \texttt{Trainer} & Internal states (weights, biases, cached activations, momentum tables) are \texttt{private}; mutated only via disciplined methods. \\
+\addlinespace
+\textbf{Composition} & \texttt{NeuralNetwork} has \texttt{Layer} has \texttt{Neuron}; \texttt{HtmlReport} has \texttt{IHtmlSection} & Lifetimes flow downward; composite containers own elements by value or \texttt{unique\_ptr}. \\
+\addlinespace
+\textbf{SRP} & \texttt{Dataset}, \texttt{Trainer}, \texttt{ModelSerializer}, \texttt{CSVLossExporter} & Single responsibility per class: \texttt{Dataset} owns storage, \texttt{Trainer} owns training, \texttt{ModelSerializer} owns file schemas. \\
+\addlinespace
+\textbf{Open/Closed} & \texttt{IActivation}, \texttt{IOptimizer}, \texttt{IVisualizer}, \texttt{IHtmlSection} & Open for extension, closed for modification: adding ELU or RMSprop required zero edits to existing activation/optimizer classes. \\
+\addlinespace
+\textbf{Strategy} & \texttt{IOptimizer}, \texttt{ILoss}, \texttt{IActivation}, \texttt{INormalizer}, \texttt{ILRScheduler} & Interchangeable algorithmic strategies swapped dynamically at runtime through configuration keys. \\
+\addlinespace
+\textbf{Observer} & \texttt{TrainingCallback}, \texttt{LiveConsole}, \texttt{LiveBridge} & Training loop broadcasts epoch events to registered observers without coupling training math to presentation. \\
+\addlinespace
+\textbf{Factory} & \texttt{ActivationFactory}, \texttt{OptimizerFactory}, \texttt{LossFactory}, \texttt{NormalizerFactory} & Maps runtime strings to heap-allocated objects wrapped in smart pointers; centralises instantiation logic. \\
+\addlinespace
+\textbf{Builder} & \texttt{HtmlReportBuilder} & Fluent interface (\texttt{.withSeries().withBoundary().build()}) constructing complex HTML reports step by step. \\
+\addlinespace
+\textbf{Chain of Resp.} & \texttt{TargetSelectorChain} & Successively attempts header name, distinct class count, and fallback column links to elect target labels. \\
+\addlinespace
+\textbf{Visitor} & \texttt{INetworkVisitor}, \texttt{NeuronInspectorVisitor} & Traverses network hierarchy to perform inspections or weight adjustments without polluting domain models. \\
+\addlinespace
+\textbf{Composite} & \texttt{CompositeValidator}, \texttt{CallbackList} & Treats individual validation rules and collections uniformly by aggregating child nodes under the same interface. \\
+\addlinespace
+\textbf{Fa\c{c}ade} & \texttt{ExperimentController} & Unified entry point (\texttt{prepare}, \texttt{run}) shielding client code and GUI from internal subsystem complexity. \\
+\addlinespace
+\textbf{Bridge} & \texttt{LiveBridge} & Thread-safe producer-consumer bridge with mutexes and atomics decoupling background training from the GUI. \\
+\addlinespace
+\textbf{Memento} & \texttt{ModelSerializer} & Captures and restores network states (weights, biases, momentum vectors) without exposing internal invariants. \\
+\addlinespace
+\textbf{RAII / Safety} & Entire codebase & Ownership strictly expressed via \texttt{std::unique\_ptr} and \texttt{std::shared\_ptr}; zero raw memory leaks; typed exceptions. \\
+\bottomrule
+\end{tabularx}
+\caption{Comprehensive OOP Mapping in MiniANN}
+\end{table}
+
+\subsection{Detailed Analysis of Selected Patterns}
+
+\subsubsection{Strategy Pattern (\texttt{IOptimizer}, \texttt{IActivation}, \texttt{INormalizer})}
+The training engine relies on the Strategy pattern to decouple optimisation algorithms from the backpropagation traversal. The \texttt{Trainer} holds an \texttt{IOptimizer\&} reference. When \texttt{optimizer.step(net, batchSize)} is invoked, polymorphism directs execution to the selected algorithm (e.g., \texttt{RMSprop::step} or \texttt{Adam::step}), updating parameters without branching logic inside the trainer.
+
+\subsubsection{Observer Pattern (\texttt{TrainingCallback}, \texttt{LiveBridge})}
+During iterative training, decoupling telemetry from computational math is paramount. \texttt{Trainer::fit} accepts an optional \texttt{TrainingCallback*} observer. At the conclusion of each epoch, it invokes \texttt{callback->onEpoch(epoch, history)}. Concrete observers such as \texttt{LiveConsole} render ASCII curves, while the Qt workbench's bridge queues thread-safe snapshots for 2D and 3D rendering.
+
+\subsubsection{Visitor Pattern (\texttt{INetworkVisitor})}
+To perform non-intrusive operations across the network structure (such as serialisation formatting, statistics collection, or parameter decay), \texttt{NeuralNetwork} implements \texttt{accept(INetworkVisitor\& visitor)}. The visitor visits each layer and neuron sequentially, separating operational algorithms from the network data structure.
+
+\newpage
+% ==============================================================================
+% SECTION 8: UML / CLASS DIAGRAMS
+% ==============================================================================
+\section{UML / Class Diagrams}
+
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
-    class/.style={rectangle, draw=primary, fill=white, thick, minimum width=3.8cm, align=left, font=\ttfamily\scriptsize},
-    abstract/.style={rectangle, draw=accent, fill=cardbg, thick, minimum width=3.8cm, align=left, font=\ttfamily\scriptsize},
-    arrow/.style={-Latex, thick, color=primary},
-    inherit/.style={-Triangle, thick, draw=primary, fill=white},
-    compose/.style={-{Diamond[fill=primary]}, thick, draw=primary}
+    class/.style={draw, rectangle, text width=3.6cm, align=left, font=\scriptsize},
+    arrow/.style={-Latex, thick},
+    compose/.style={-{Diamond[fill=black]}, thick},
+    shares/.style={-{Diamond[fill=white]}, thick}
 ]
-    % Classes
-    \node[abstract] (iact) {
-        \textbf{$\ll$interface$\gg$\ IActivation}\\
-        + activate(double z): double\\
-        + derivative(double z): double\\
-        + name(): string
+    \node[class] (net) {
+        \textbf{NeuralNetwork}\\[2pt]
+        \rule{3.6cm}{0.4pt}\\[2pt]
+        $-$ layers\_ : std::vector<Layer>\\[2pt]
+        \rule{3.6cm}{0.4pt}\\[2pt]
+        $+$ addLayer(l : Layer) : void\\
+        $+$ predict(x : Vector) : Vector\\
+        $+$ backward(dL/dOut : Vector) : void\\
+        $+$ zeroGradients() : void\\
+        $+$ layers() : vector<Layer>\&
     };
 
-    \node[class, below left=0.8cm and -0.8cm of iact] (relu) {
-        \textbf{ReLU}\\
-        + activate(z): double\\
-        + derivative(z): double
-    };
-    \node[class, below=0.8cm of iact] (tanh) {
-        \textbf{Tanh}\\
-        + activate(z): double\\
-        + derivative(z): double
-    };
-    \node[class, below right=0.8cm and -0.8cm of iact] (elu) {
-        \textbf{ELU}\\
-        - alpha\_: double\\
-        + activate(z): double\\
-        + derivative(z): double
+    \node[class, below=0.8cm of net] (layer) {
+        \textbf{Layer}\\[2pt]
+        \rule{3.6cm}{0.4pt}\\[2pt]
+        $-$ neurons\_ : std::vector<Neuron>\\
+        $-$ inputSize\_ : size\_t\\[2pt]
+        \rule{3.6cm}{0.4pt}\\[2pt]
+        $+$ forward(x : Vector) : Vector\\
+        $+$ backward(dL/dOut : Vector) : Vector\\
+        $+$ zeroGradients() : void\\
+        $+$ neurons() : vector<Neuron>\&
     };
 
-    \node[class, right=2.0cm of iact] (neuron) {
-        \textbf{Neuron}\\
-        - weights\_: Vector\\
-        - bias\_: double\\
-        - gradW\_: Vector\\
-        - gradB\_: double\\
-        + forward(in): double\\
-        + backward(delta, lr): void
+    \node[class, below=0.8cm of layer] (neuron) {
+        \textbf{Neuron}\\[2pt]
+        \rule{3.6cm}{0.4pt}\\[2pt]
+        $-$ weights\_, bias\_ : Vector, double\\
+        $-$ gradWeights\_, gradBias\_ : Vector, double\\
+        $-$ activation\_ : ActivationPtr\\
+        $-$ lastInputs\_, lastZ\_, delta\_\\[2pt]
+        \rule{3.6cm}{0.4pt}\\[2pt]
+        $+$ forward(x : Vector) : double\\
+        $+$ backward(delta : double) : void\\
+        $+$ applyStep(dW : Vector, dB : double) : void\\
+        $+$ zeroGradients() : void
     };
 
-    \node[class, right=1.6cm of neuron] (layer) {
-        \textbf{Layer}\\
-        - neurons\_: vector<Neuron>\\
-        - act\_: shared\_ptr<IActivation>\\
-        + forward(in): Vector\\
-        + backward(deltas): Vector
+    \node[class, right=1.6cm of neuron] (iact) {
+        \textbf{\textit{IActivation}}\\[2pt]
+        \rule{3.6cm}{0.4pt}\\[2pt]
+        $+$ activate(z : double) : double\\
+        $+$ derivative(z : double) : double\\
+        $+$ name() : string\\
+        $+$ isVector() : bool
     };
 
-    \node[class, below=1.2cm of layer] (network) {
-        \textbf{NeuralNetwork}\\
-        - layers\_: vector<Layer>\\
-        + forward(in): Vector\\
-        + predict(in): Vector\\
-        + backward(target, loss): void
-    };
-
-    % Relationships
-    \draw[inherit] (relu) -- (iact);
-    \draw[inherit] (tanh) -- (iact);
-    \draw[inherit] (elu) -- (iact);
-    \draw[compose] (neuron) -- node[above, font=\tiny\sffamily]{1..*} (layer);
-    \draw[compose] (layer) -- node[right, font=\tiny\sffamily]{1..*} (network);
-    \draw[arrow, dashed] (layer) -- (iact);
+    \draw[compose] (layer) -- node[right, font=\tiny]{has-many} (net);
+    \draw[compose] (neuron) -- node[right, font=\tiny]{has-many} (layer);
+    \draw[shares] (iact) -- node[above, font=\tiny]{shares} (neuron);
 \end{tikzpicture}
-\caption{UML Class Diagram: Core Neural Network Model and Activation Hierarchy}
-\label{fig:uml_model}
+\caption{Core Composition Backbone: \texttt{NeuralNetwork} $\blacklozenge\to$ \texttt{Layer} $\blacklozenge\to$ \texttt{Neuron} $\lozenge\to$ \texttt{IActivation}. Lifetime flows downward; activation objects are shared and immutable.}
 \end{figure}
 
-\subsection{Optimization, Loss \& Visitor Architecture}
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
-    class/.style={rectangle, draw=primary, fill=white, thick, minimum width=3.4cm, align=left, font=\ttfamily\scriptsize},
-    abstract/.style={rectangle, draw=accent, fill=cardbg, thick, minimum width=3.4cm, align=left, font=\ttfamily\scriptsize},
-    inherit/.style={-Triangle, thick, draw=primary, fill=white},
-    arrow/.style={-Latex, thick, color=primary}
+    class/.style={draw, rectangle, text width=3.0cm, align=left, font=\scriptsize},
+    subclass/.style={draw, rectangle, minimum width=2.4cm, align=center, font=\scriptsize},
+    inherit/.style={-{Triangle[fill=white]}, thick}
 ]
-    \node[abstract] (iopt) {
-        \textbf{$\ll$interface$\gg$\ IOptimizer}\\
-        + step(net, gradClip): void\\
-        + visit(visitor): void\\
-        + setLearningRate(lr): void
+    % IActivation Hierarchy
+    \node[class] (iact) {
+        \textbf{\textit{IActivation}}\\[2pt]
+        \rule{3.0cm}{0.4pt}\\[2pt]
+        $+$ activate(z)\\
+        $+$ derivative(z)\\
+        $+$ name()
     };
+    \node[subclass, below left=0.6cm and -0.8cm of iact] (sig) {Sigmoid};
+    \node[subclass, below=0.6cm of iact] (tanh) {Tanh};
+    \node[subclass, below right=0.6cm and -0.8cm of iact] (elu) {ELU / ReLU};
+    \draw[inherit] (sig) -- (iact);
+    \draw[inherit] (tanh) -- (iact);
+    \draw[inherit] (elu) -- (iact);
 
-    \node[class, below left=0.8cm and -0.6cm of iopt] (sgd) {
-        \textbf{SGD}\\
-        + step(net): void
+    % ILoss Hierarchy
+    \node[class, right=1.2cm of iact] (iloss) {
+        \textbf{\textit{ILoss}}\\[2pt]
+        \rule{3.0cm}{0.4pt}\\[2pt]
+        $+$ compute(p, t)\\
+        $+$ gradient(p, t)\\
+        $+$ name()
     };
-    \node[class, below=0.8cm of iopt] (adam) {
-        \textbf{Adam}\\
-        - m\_, v\_: vector<Vector>\\
-        - beta1, beta2: double\\
-        + step(net): void
-    };
-    \node[class, below right=0.8cm and -0.6cm of iopt] (rmsprop) {
-        \textbf{RMSprop}\\
-        - v\_: vector<Vector>\\
-        - alpha: double\\
-        + step(net): void
-    };
+    \node[subclass, below left=0.6cm and -0.8cm of iloss] (mse) {MSELoss};
+    \node[subclass, below=0.6cm of iloss] (bce) {BCELoss};
+    \node[subclass, below right=0.6cm and -0.8cm of iloss] (cce) {CCELoss};
+    \draw[inherit] (mse) -- (iloss);
+    \draw[inherit] (bce) -- (iloss);
+    \draw[inherit] (cce) -- (iloss);
 
-    \node[abstract, right=1.6cm of iopt] (iloss) {
-        \textbf{$\ll$interface$\gg$\ ILoss}\\
-        + compute(pred, target): double\\
-        + gradient(pred, target): Vector
+    % IOptimizer Hierarchy
+    \node[class, right=1.2cm of iloss] (iopt) {
+        \textbf{\textit{IOptimizer}}\\[2pt]
+        \rule{3.0cm}{0.4pt}\\[2pt]
+        $+$ step(net, B)\\
+        $+$ visit(visitor)\\
+        $+$ name()
     };
-
-    \node[class, below=0.8cm of iloss] (cce) {
-        \textbf{CCELoss}\\
-        + compute(): double\\
-        + gradient(): Vector
-    };
-
-    \node[class, right=1.2cm of iloss] (trainer) {
-        \textbf{Trainer}\\
-        - net\_: NeuralNetwork\&\\
-        - loss\_: ILoss\&\\
-        - opt\_: IOptimizer\&\\
-        + fit(data, cfg, cb): void
-    };
-
+    \node[subclass, below left=0.6cm and -0.8cm of iopt] (sgd) {SGD};
+    \node[subclass, below=0.6cm of iopt] (adam) {Adam};
+    \node[subclass, below right=0.6cm and -0.8cm of iopt] (rmsprop) {RMSprop};
     \draw[inherit] (sgd) -- (iopt);
     \draw[inherit] (adam) -- (iopt);
     \draw[inherit] (rmsprop) -- (iopt);
-    \draw[inherit] (cce) -- (iloss);
-    \draw[arrow] (trainer) -- (iopt);
-    \draw[arrow] (trainer) -- (iloss);
 \end{tikzpicture}
-\caption{UML Class Diagram: Optimization and Loss Abstractions}
-\label{fig:uml_opt}
+\caption{Strategy Hierarchies for Activations, Losses, and Optimisers. Concrete strategies are instantiated via corresponding Factory classes from runtime string tokens.}
 \end{figure}
 
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    class/.style={draw, rectangle, text width=3.8cm, align=left, font=\scriptsize},
+    arrow/.style={-Latex, thick}
+]
+    \node[class] (cfg) {
+        \textbf{TrainingConfig}\\[2pt]
+        \rule{3.8cm}{0.4pt}\\[2pt]
+        epochs, batchSize\\
+        shuffle, seed, logEvery\\
+        weightDecay, gradClip
+    };
+
+    \node[class, right=1.5cm of cfg] (cb) {
+        \textbf{\textit{TrainingCallback}}\\[2pt]
+        \rule{3.8cm}{0.4pt}\\[2pt]
+        $+$ onEpoch(e, h) : void\\
+        $+$ shouldStop() : bool
+    };
+
+    \node[class, below=0.8cm of cfg] (hist) {
+        \textbf{TrainingHistory}\\[2pt]
+        \rule{3.8cm}{0.4pt}\\[2pt]
+        trainLoss, validationLoss\\
+        trainAcc, validationAcc
+    };
+
+    \node[class, below=0.8cm of cb] (live) {
+        \textbf{LiveBridge : Callback}\\[2pt]
+        \rule{3.8cm}{0.4pt}\\[2pt]
+        snapshots, epochCounter\\
+        mutex, stopRequested
+    };
+
+    \node[draw, rectangle, text width=9.5cm, align=left, font=\scriptsize, below=0.8cm of hist] (trainer) {
+        \textbf{Trainer}\\[2pt]
+        \rule{9.5cm}{0.4pt}\\[2pt]
+        $-$ net\_ : NeuralNetwork\& \quad $-$ loss\_ : ILoss\& \quad $-$ opt\_ : IOptimizer\& \quad $-$ logger\_ : ILogger*\\[2pt]
+        \rule{9.5cm}{0.4pt}\\[2pt]
+        $+$ fit(train, val*, cfg, cb*) : TrainingHistory
+    };
+
+    \draw[arrow] (trainer) -- node[left, font=\tiny]{uses} (cfg);
+    \draw[arrow] (trainer) -- node[right, font=\tiny]{produces} (hist);
+    \draw[arrow] (trainer) -- node[right, font=\tiny]{notifies} (cb);
+    \draw[-{Triangle[fill=white]}, thick] (live) -- (cb);
+\end{tikzpicture}
+\caption{Training Collaboration: \texttt{Trainer} aggregates references to the model, loss, and optimiser; executes training using \texttt{TrainingConfig}, records \texttt{TrainingHistory}, and notifies \texttt{TrainingCallback} observers.}
+\end{figure}
+
+\newpage
 % ==============================================================================
-% SECTION 5: MATHEMATICAL FORMULATIONS
+% SECTION 9: DYNAMIC VIEW & CONCRETE DRY RUN TRACE
 % ==============================================================================
-\section{Mathematical Formulations \& Algorithmic Logic}
+\section{Dynamic View \& Concrete Dry Run Trace}
 
-\subsection{Forward Propagation}
-For an input vector $\mathbf{x} = \mathbf{a}^{[0]} \in \mathbb{R}^{d_{\text{in}}}$, the activations at layer $l \in \{1, \dots, L\}$ with $n_l$ neurons are evaluated as:
-\begin{align}
-    \mathbf{z}^{[l]} &= \mathbf{W}^{[l]} \mathbf{a}^{[l-1]} + \mathbf{b}^{[l]} \\
-    \mathbf{a}^{[l]} &= f^{[l]}\left(\mathbf{z}^{[l]}\right)
-\end{align}
-where $\mathbf{W}^{[l]} \in \mathbb{R}^{n_l \times n_{l-1}}$ represents the layer weight matrix, $\mathbf{b}^{[l]} \in \mathbb{R}^{n_l}$ the bias vector, and $f^{[l]}$ the element-wise activation function.
+\subsection{Per-batch training sequence}
+The execution order within each batch strictly enforces mathematical invariants:
+\begin{enumerate}[itemsep=2pt]
+    \item \texttt{net.zeroGradients()} zeroes accumulated weight and bias gradients across all layers.
+    \item For each sample:
+    \begin{itemize}[itemsep=1pt]
+        \item \texttt{net.predict(x)} executes forward propagation, caching inputs $a^{[l-1]}$ and pre-activations $z^{[l]}$.
+        \item \texttt{loss.gradient(pred, target)} computes output error derivative $\nabla_{\hat{y}}\mathcal{L}$.
+        \item \texttt{net.backward(dL/dOut)} propagates deltas backward, accumulating gradients: $\mathbf{g}_W \mathrel{+}= \boldsymbol{\delta} \mathbf{a}^T$, $g_b \mathrel{+}= \delta$.
+    \end{itemize}
+    \item \textbf{Regularisation:} If $\lambda > 0$, add $L_2$ weight penalty to accumulated gradients.
+    \item \textbf{Grad Clipping:} If enabled, evaluate $\|g\|_2$; scale down if norm exceeds threshold.
+    \item \texttt{optimizer.step(net, B)}: Optimiser updates weights using averaged gradients $\frac{1}{B} \mathbf{g}$. Crucially, weights are read before mutation, ensuring subsequent layer backward passes are mathematically untainted.
+\end{enumerate}
 
-\subsection{Analytic Backpropagation Equations}
-Given target $\mathbf{y}$ and loss $\mathcal{L}(\mathbf{a}^{[L]}, \mathbf{y})$, the output layer error delta vector $\boldsymbol{\delta}^{[L]}$ is defined as:
-\begin{equation}
-    \boldsymbol{\delta}^{[L]} = \nabla_{\mathbf{a}^{[L]}} \mathcal{L} \odot {f^{[L]}}'\left(\mathbf{z}^{[L]}\right)
-\end{equation}
-For hidden layers $l = L-1, L-2, \dots, 1$, error signals propagate backward via:
-\begin{equation}
-    \boldsymbol{\delta}^{[l]} = \left( {\mathbf{W}^{[l+1]}}^T \boldsymbol{\delta}^{[l+1]} \right) \odot {f^{[l]}}'\left(\mathbf{z}^{[l]}\right)
-\end{equation}
-The accumulated gradients with respect to parameters over a mini-batch of size $B$ are:
-\begin{equation}
-    \frac{\partial \mathcal{L}}{\partial \mathbf{W}^{[l]}} = \frac{1}{B} \sum_{i=1}^B \boldsymbol{\delta}_i^{[l]} \left(\mathbf{a}_i^{[l-1]}\right)^T, \qquad \frac{\partial \mathcal{L}}{\partial \mathbf{b}^{[l]}} = \frac{1}{B} \sum_{i=1}^B \boldsymbol{\delta}_i^{[l]}
-\end{equation}
-
-\subsection{Regularization \& Gradient Norm Clipping}
-\begin{itemize}[leftmargin=1.5em]
-    \item \textbf{$L_2$ Regularization (Weight Decay):} With penalty coefficient $\lambda$, the weight gradients receive an additive penalty:
-    \begin{equation}
-        \mathbf{g}_W \leftarrow \mathbf{g}_W + \lambda \mathbf{W}
-    \end{equation}
-    \item \textbf{Global Gradient Norm Clipping:} To prevent exploding gradients, the total Frobenius norm over all parameters is computed:
-    \begin{equation}
-        \|g\|_2 = \sqrt{\sum_l \|\mathbf{g}_{W^{[l]}}\|_F^2 + \sum_l \|\mathbf{g}_{b^{[l]}}\|_2^2}
-    \end{equation}
-    If $\|g\|_2 > g_{\max}$, all gradients are rescaled: $\mathbf{g} \leftarrow \mathbf{g} \cdot \left(\frac{g_{\max}}{\|g\|_2}\right)$.
-\end{itemize}
-
-\subsection{Adaptive Optimization Algorithms}
-\begin{itemize}[leftmargin=1.5em]
-    \item \textbf{RMSprop:} Maintains an exponentially decaying average of squared gradients:
-    \begin{align}
-        \mathbf{v}_t &= \alpha \mathbf{v}_{t-1} + (1 - \alpha) \mathbf{g}_t^2 \\
-        \boldsymbol{\theta}_t &= \boldsymbol{\theta}_{t-1} - \frac{\eta}{\sqrt{\mathbf{v}_t + \epsilon}} \odot \mathbf{g}_t
-    \end{align}
-    where $\alpha \in [0.9, 0.999]$ and $\epsilon = 10^{-8}$.
-    \item \textbf{Adam:} Computes biased first and second moment estimates with bias-correction:
-    \begin{align}
-        \mathbf{m}_t &= \beta_1 \mathbf{m}_{t-1} + (1 - \beta_1) \mathbf{g}_t, \qquad \mathbf{v}_t = \beta_2 \mathbf{v}_{t-1} + (1 - \beta_2) \mathbf{g}_t^2 \\
-        \hat{\mathbf{m}}_t &= \frac{\mathbf{m}_t}{1 - \beta_1^t}, \qquad \hat{\mathbf{v}}_t = \frac{\mathbf{v}_t}{1 - \beta_2^t} \\
-        \boldsymbol{\theta}_t &= \boldsymbol{\theta}_{t-1} - \frac{\eta}{\sqrt{\hat{\mathbf{v}}_t} + \epsilon} \odot \hat{\mathbf{m}}_t
-    \end{align}
-\end{itemize}
-
-% ==============================================================================
-% SECTION 6: END-TO-END DRY RUN TRACE
-% ==============================================================================
-\section{End-to-End Dry Run Trace (Concrete Walkthrough)}
-
-To verify the mathematical and operational mechanics of the engine, we perform a detailed trace of a single training step on an XOR configuration: Architecture $2 \to 2 \to 1$, using $\tanh$ hidden activation, $\sigma$ output activation, MSE loss, and RMSprop optimization.
-
-\subsection{Initial State Setup}
-\begin{itemize}[leftmargin=1.5em, itemsep=2pt]
-    \item \textbf{Sample Input:} $\mathbf{x} = [0.0, 1.0]^T$, \textbf{Target:} $y = 1.0$.
-    \item \textbf{Hidden Layer Weights \& Biases:}
+\subsection{Concrete mathematical trace for 1 dry run}
+We trace a complete forward and backward step on a $2 \to 2 \to 1$ network solving XOR.
+\begin{itemize}[itemsep=1pt]
+    \item \textbf{Sample:} $\mathbf{x} = [0.0, 1.0]^T$, Target $y = 1.0$.
+    \item \textbf{Hidden Layer 1 ($\tanh$):}
     $\mathbf{W}^{[1]} = \begin{bmatrix} 0.5 & -0.2 \\ -0.4 & 0.8 \end{bmatrix}, \quad \mathbf{b}^{[1]} = \begin{bmatrix} 0.1 \\ -0.1 \end{bmatrix}$.
-    \item \textbf{Output Layer Weights \& Bias:}
+    \item \textbf{Output Layer 2 ($\sigma$):}
     $\mathbf{W}^{[2]} = \begin{bmatrix} 0.7 & -0.5 \end{bmatrix}, \quad b^{[2]} = 0.2$.
-    \item \textbf{Hyperparameters:} Learning rate $\eta = 0.1$, RMSprop decay $\alpha = 0.9$, $\epsilon = 10^{-8}$, initial second moment $\mathbf{v}_0 = 0$.
+    \item \textbf{Optimiser:} RMSprop with $\eta = 0.1$, decay $\alpha = 0.9$, $\epsilon = 10^{-8}$, initial second moments $v_0 = 0$.
 \end{itemize}
 
-\subsection{Forward Pass Execution}
-\begin{enumerate}[leftmargin=1.8em, itemsep=3pt]
-    \item \textbf{Hidden Net Inputs $\mathbf{z}^{[1]}$:}
-    \begin{equation*}
-        \mathbf{z}^{[1]} = \begin{bmatrix} 0.5(0) - 0.2(1) + 0.1 \\ -0.4(0) + 0.8(1) - 0.1 \end{bmatrix} = \begin{bmatrix} -0.1000 \\ 0.7000 \end{bmatrix}
-    \end{equation*}
-    \item \textbf{Hidden Activations $\mathbf{a}^{[1]} = \tanh(\mathbf{z}^{[1]})$:}
-    \begin{equation*}
-        \mathbf{a}^{[1]} = \begin{bmatrix} \tanh(-0.1000) \\ \tanh(0.7000) \end{bmatrix} = \begin{bmatrix} -0.0997 \\ 0.6044 \end{bmatrix}
-    \end{equation*}
-    \item \textbf{Output Net Input $z^{[2]}$:}
-    \begin{equation*}
-        z^{[2]} = 0.7(-0.0997) - 0.5(0.6044) + 0.2 = -0.0698 - 0.3022 + 0.2 = -0.1720
-    \end{equation*}
-    \item \textbf{Output Activation $a^{[2]} = \sigma(z^{[2]})$:}
-    \begin{equation*}
-        a^{[2]} = \frac{1}{1 + e^{0.1720}} = 0.4571
-    \end{equation*}
-    \item \textbf{Loss Computation (MSE):}
-    \begin{equation*}
-        \mathcal{L} = \frac{1}{2}(a^{[2]} - y)^2 = \frac{1}{2}(0.4571 - 1.0)^2 = \frac{1}{2}(-0.5429)^2 = 0.1474
-    \end{equation*}
-\end{enumerate}
-
-\subsection{Backward Pass Execution}
-\begin{enumerate}[leftmargin=1.8em, itemsep=3pt]
-    \item \textbf{Output Error Delta $\delta^{[2]}$:}
-    \begin{align*}
-        {\sigma}'(z^{[2]}) &= a^{[2]}(1 - a^{[2]}) = 0.4571(1 - 0.4571) = 0.2482 \\
-        \delta^{[2]} &= (a^{[2]} - y) \cdot {\sigma}'(z^{[2]}) = (-0.5429) \cdot 0.2482 = -0.1347
-    \end{align*}
-    \item \textbf{Gradients for Output Layer:}
-    \begin{align*}
-        \frac{\partial \mathcal{L}}{\partial \mathbf{W}^{[2]}} &= \delta^{[2]} (\mathbf{a}^{[1]})^T = -0.1347 \cdot [-0.0997, \ 0.6044] = [0.0134, \ -0.0814] \\
-        \frac{\partial \mathcal{L}}{\partial b^{[2]}} &= \delta^{[2]} = -0.1347
-    \end{align*}
-    \item \textbf{Hidden Error Deltas $\boldsymbol{\delta}^{[1]}$:}
-    \begin{align*}
-        {\tanh}'(\mathbf{z}^{[1]}) &= 1 - (\mathbf{a}^{[1]})^2 = \begin{bmatrix} 1 - (-0.0997)^2 \\ 1 - (0.6044)^2 \end{bmatrix} = \begin{bmatrix} 0.9901 \\ 0.6347 \end{bmatrix} \\
-        \boldsymbol{\delta}^{[1]} &= \left( (\mathbf{W}^{[2]})^T \delta^{[2]} \right) \odot {\tanh}'(\mathbf{z}^{[1]}) = \begin{bmatrix} 0.7(-0.1347) \cdot 0.9901 \\ -0.5(-0.1347) \cdot 0.6347 \end{bmatrix} = \begin{bmatrix} -0.0934 \\ 0.0428 \end{bmatrix}
-    \end{align*}
-    \item \textbf{Gradients for Hidden Layer:}
-    \begin{align*}
-        \frac{\partial \mathcal{L}}{\partial \mathbf{W}^{[1]}} &= \boldsymbol{\delta}^{[1]} \mathbf{x}^T = \begin{bmatrix} -0.0934 \\ 0.0428 \end{bmatrix} [0.0, \ 1.0] = \begin{bmatrix} 0.0 & -0.0934 \\ 0.0 & 0.0428 \end{bmatrix} \\
-        \frac{\partial \mathcal{L}}{\partial \mathbf{b}^{[1]}} &= \boldsymbol{\delta}^{[1]} = \begin{bmatrix} -0.0934 \\ 0.0428 \end{bmatrix}
-    \end{align*}
-\end{enumerate}
-
-\subsection{Parameter Update (RMSprop Step)}
-For output weight $W_{1,2}^{[2]}$ (current value $-0.5$, gradient $g = -0.0814$):
+\subsubsection{Step 1: Forward Propagation}
 \begin{align*}
-    v_1 &= 0.9(0) + 0.1(-0.0814)^2 = 0.0006626 \\
-    W_{1,2}^{[2]} &\leftarrow -0.5 - \frac{0.1}{\sqrt{0.0006626 + 10^{-8}}} (-0.0814) = -0.5 - \frac{0.1}{0.02574} (-0.0814) = -0.5 + 0.3162 = -0.1838
+    \mathbf{z}^{[1]} &= \mathbf{W}^{[1]} \mathbf{x} + \mathbf{b}^{[1]} = \begin{bmatrix} 0.5(0) - 0.2(1) + 0.1 \\ -0.4(0) + 0.8(1) - 0.1 \end{bmatrix} = \begin{bmatrix} -0.1000 \\ 0.7000 \end{bmatrix} \\
+    \mathbf{a}^{[1]} &= \tanh(\mathbf{z}^{[1]}) = \begin{bmatrix} \tanh(-0.1000) \\ \tanh(0.7000) \end{bmatrix} = \begin{bmatrix} -0.0997 \\ 0.6044 \end{bmatrix} \\
+    z^{[2]} &= \mathbf{W}^{[2]} \mathbf{a}^{[1]} + b^{[2]} = 0.7(-0.0997) - 0.5(0.6044) + 0.2 = -0.1720 \\
+    a^{[2]} &= \sigma(z^{[2]}) = \frac{1}{1 + e^{0.1720}} = 0.4571 \\
+    \mathcal{L}_{\text{MSE}} &= \frac{1}{2}(a^{[2]} - y)^2 = \frac{1}{2}(0.4571 - 1.0)^2 = 0.1474
 \end{align*}
-Notice how the adaptive learning rate immediately applies a large corrective step ($+0.3162$) toward lowering the error, demonstrating the fast convergence characteristics of adaptive second-moment algorithms.
+
+\subsubsection{Step 2: Backward Propagation}
+\begin{align*}
+    \sigma'(z^{[2]}) &= a^{[2]}(1 - a^{[2]}) = 0.4571(1 - 0.4571) = 0.2482 \\
+    \delta^{[2]} &= (a^{[2]} - y) \cdot \sigma'(z^{[2]}) = (-0.5429) \cdot 0.2482 = -0.1347 \\
+    \frac{\partial \mathcal{L}}{\partial \mathbf{W}^{[2]}} &= \delta^{[2]} (\mathbf{a}^{[1]})^T = -0.1347 \cdot [-0.0997, \ 0.6044] = [0.0134, \ -0.0814] \\
+    \frac{\partial \mathcal{L}}{\partial b^{[2]}} &= \delta^{[2]} = -0.1347
+\end{align*}
+Propagating delta to hidden layer:
+\begin{align*}
+    \tanh'(\mathbf{z}^{[1]}) &= 1 - (\mathbf{a}^{[1]})^2 = \begin{bmatrix} 1 - (-0.0997)^2 \\ 1 - (0.6044)^2 \end{bmatrix} = \begin{bmatrix} 0.9901 \\ 0.6347 \end{bmatrix} \\
+    \boldsymbol{\delta}^{[1]} &= \left( (\mathbf{W}^{[2]})^T \delta^{[2]} \right) \odot \tanh'(\mathbf{z}^{[1]}) = \begin{bmatrix} 0.7(-0.1347) \cdot 0.9901 \\ -0.5(-0.1347) \cdot 0.6347 \end{bmatrix} = \begin{bmatrix} -0.0934 \\ 0.0428 \end{bmatrix} \\
+    \frac{\partial \mathcal{L}}{\partial \mathbf{W}^{[1]}} &= \boldsymbol{\delta}^{[1]} \mathbf{x}^T = \begin{bmatrix} -0.0934 \\ 0.0428 \end{bmatrix} [0.0, \ 1.0] = \begin{bmatrix} 0.0 & -0.0934 \\ 0.0 & 0.0428 \end{bmatrix}, \quad \frac{\partial \mathcal{L}}{\partial \mathbf{b}^{[1]}} = \begin{bmatrix} -0.0934 \\ 0.0428 \end{bmatrix}
+\end{align*}
+
+\subsubsection{Step 3: RMSprop Parameter Update}
+For output weight $W_{1,2}^{[2]}$ (prior value $-0.5$, gradient $g = -0.0814$):
+\begin{align*}
+    v_1 &= \alpha v_0 + (1 - \alpha) g^2 = 0.9(0) + 0.1(-0.0814)^2 = 0.0006626 \\
+    W_{1,2}^{[2]\,\text{new}} &= -0.5 - \frac{\eta}{\sqrt{v_1 + \epsilon}} g = -0.5 - \frac{0.1}{\sqrt{0.0006626 + 10^{-8}}} (-0.0814) = -0.5 + 0.3162 = -0.1838
+\end{align*}
+The adaptive learning rate applies a corrective step of $+0.3162$, shifting the weight rapidly toward minimizing the classification error.
 
 % ==============================================================================
-% SECTION 7: INTERACTIVE WORKBENCH (GUI/UX) IMPLEMENTATION
+% SECTION 10: VERIFICATION AND TEST RESULTS
 % ==============================================================================
-\section{Interactive Workbench (GUI/UX) Architecture}
+\section{Verification and Test Results}
 
-\subsection{Asynchronous Threading Model (\texttt{LiveBridge})}
-To maintain an uncompromising 60 FPS user interface without dropped frames or stuttering during intensive training loops, MiniANN implements a thread-safe producer-consumer model using the \texttt{LiveBridge} abstraction:
-\begin{itemize}[leftmargin=1.5em, itemsep=2pt]
-    \item \textbf{Worker Thread (Producer):} Executes \texttt{Trainer::fit()}. At every epoch, it logs scalar metrics and snapshots network state to an internal ring buffer guarded by \texttt{std::mutex}.
-    \item \textbf{UI Thread (Consumer):} A \texttt{QTimer} running at 33ms (30 FPS) reads from atomic counters (\texttt{g\_bridge.epoch}) and pulls batch metrics, refreshing canvas widgets without blocking.
-    \item \textbf{Responsive Interruption:} The GUI thread communicates cancellation via atomic boolean flags (\texttt{stopRequested}), halting the background worker in sub-millisecond time.
-\end{itemize}
-
-\subsection{Visualization Canvas Modules}
-\begin{itemize}[leftmargin=1.5em, itemsep=3pt]
-    \item \textbf{Loss \& Accuracy Telemetry:} Live line charts displaying training and validation metrics simultaneously, featuring auto-scaling axes, moving averages, and best-epoch markers.
-    \item \textbf{2D Decision Boundary Heatmap:} Computes a dynamic $60 \times 60$ dense grid inference over feature space ($x_1, x_2$), rendering classification contours alongside colored data points.
-    \item \textbf{Feedforward Network Graph:} Interactive SVG/raster rendering of network layers. Node sizes indicate activation strength, while connection thickness and color denote weight polarity and magnitude.
-    \item \textbf{Confusion Matrix:} Real-time multiclass performance grid showing true positives, false positives, precision, recall, and F1-score.
-\end{itemize}
-
-\subsection{UI Polish \& Workflow Enhancements}
-\begin{itemize}[leftmargin=1.5em, itemsep=2pt]
-    \item \textbf{Structured Partition Card:} Clean 3-column input card for Train/Val/Test splits with auto-clamping, stacked color split bar, and partition legends.
-    \item \textbf{Dataset Metadata HUD:} High-contrast HTML metadata panel displaying dimensions, class counts, and sample counts.
-    \item \textbf{Keyboard Navigation:} Quick keyboard shortcuts (\texttt{Space} / \texttt{F5} to start/stop, \texttt{Esc} to abort, \texttt{Ctrl+R} to reset defaults, \texttt{Ctrl+E} to export report, \texttt{Ctrl+S}/\texttt{Ctrl+O} for model I/O).
-\end{itemize}
-
-% ==============================================================================
-% SECTION 8: AUTOMATED VERIFICATION & TEST SUITE
-% ==============================================================================
-\section{Automated Verification \& Test Suite}
-
-MiniANN MVP maintains an exhaustive test harness consisting of six automated test binaries compiled via \texttt{build.ps1}:
+MiniANN maintains an automated test harness covering all mathematical and architectural components. All tests execute in $< 10$ seconds.
 
 \begin{table}[htbp]
-\centering
 \small
-\begin{tabularx}{\textwidth}{l p{4.2cm} X}
+\centering
+\begin{tabularx}{\textwidth}{l p{4.5cm} X}
 \toprule
-\textbf{Test Executable} & \textbf{Scope \& Coverage} & \textbf{Pass Criteria} \\
+\textbf{Test Executable} & \textbf{Tested Functionality} & \textbf{Observed Verification Status} \\
 \midrule
-\texttt{gradient\_check.exe} & Analytic backprop vs. finite difference approximations & Global relative error $\frac{\|g_{\text{analytic}} - g_{\text{numerical}}\|}{\|g_{\text{analytic}}\| + \|g_{\text{numerical}}\|} < 10^{-7}$ \\
-\addlinespace
-\texttt{test\_correctness.exe} & XOR convergence and mathematical sanity & 100\% classification accuracy on XOR, AND, OR benchmarks \\
-\addlinespace
-\texttt{test\_training.exe} & Multi-optimizer descent \& regularization & Verified monotonic loss reduction for SGD, Momentum, Adam, RMSprop; gradient clipping validation \\
-\addlinespace
-\texttt{test\_callbacks.exe} & Observer pattern \& early stopping & Verified patience, min-delta, NaN abort, and callback aggregation \\
-\addlinespace
-\texttt{test\_patterns.exe} & Verification of 9 GoF design patterns & Validates composite validators, visitors, factories, schedulers, and strategy independence \\
-\addlinespace
-\texttt{test\_choices.exe} & Activations, losses, and factory tokens & Analytic derivatives for all 8 activations (including ELU, Swish); cross-entropy gradient checks \\
+\texttt{gradient\_check} & Analytic vs. centered finite-diff & Relative error $3.4 \times 10^{-11} < 10^{-7}$; \textbf{PASS} \\
+\texttt{test\_basic} & Activations, serialization round-trip & Round-trip diff $= 0.0$; \textbf{PASS} \\
+\texttt{test\_choices} & 8 activations, 4 optimisers, 3 losses & Analytic gradients match numerical diff; \textbf{PASS} \\
+\texttt{test\_training} & Multi-optimizer descent \& regularisation & Loss descends for SGD, Momentum, Adam, RMSprop; \textbf{PASS} \\
+\texttt{test\_correctness} & XOR, AND, OR convergence & 100\% classification accuracy; \textbf{PASS} \\
+\texttt{test\_callbacks} & Observer hooks, early stopping & Early stop at patience threshold; \textbf{PASS} \\
+\texttt{test\_patterns} & All 9 GoF design patterns & Strategy, Visitor, Composite, Chain verified; \textbf{PASS} \\
+\texttt{test\_viz3d\_math} & 3D camera projection \& layout & Ray picking, orbit bounds, edge budgeting; \textbf{PASS} \\
 \bottomrule
 \end{tabularx}
-\caption{MiniANN Automated Verification and Test Harness Overview}
-\label{tab:tests}
+\caption{MiniANN Verification Suite and Test Results}
 \end{table}
 
 % ==============================================================================
-% SECTION 9: CONCLUSION & FUTURE 3D ROADMAP
+% SECTION 11: MINIMAL USAGE EXAMPLE
 % ==============================================================================
-\section{Conclusion \& Future Roadmap}
+\section{Minimal Usage Example}
 
-The MiniANN MVP project successfully achieves its pedagogical and architectural objectives. By enforcing a zero-external-library constraint, the framework validates that clean, robust, and extensible deep learning software can be engineered directly in standard C++20 using disciplined object-oriented design principles.
+The following self-contained listing demonstrates training XOR from scratch in approximately 30 lines:
 
-\subsection{Architectural Readiness for 3D Visualization}
-Due to the strict encapsulation of the \texttt{LiveBridge} telemetry interface, future enhancements---such as the planned \textbf{3D OpenGL / Vulkan real-time activation visualizer}---can be integrated as independent consumers. The 3D render pipeline can ingest existing \texttt{VisualizationState} snapshots without requiring a single modification to the core neural network backend or the training loop, fully demonstrating the extensibility benefits of the Open-Closed Principle (OCP).
+\begin{lstlisting}
+#include "miniann/miniann.hpp"
+#include <random>
+
+using namespace miniann;
+
+int main() {
+    std::mt19937 rng(42);
+    Dataset data = makeXorGate();
+
+    NeuralNetwork net;
+    net.addLayer(Layer(4, 2, ActivationFactory::create("tanh"), rng, WeightInit::Xavier));
+    net.addLayer(Layer(1, 4, ActivationFactory::create("sigmoid"), rng, WeightInit::Xavier));
+
+    auto loss = LossFactory::create("mse");
+    auto opt  = OptimizerFactory::create("rmsprop", 0.01);
+    ConsoleLogger logger;
+
+    Trainer trainer(net, *loss, *opt, &logger);
+    TrainingConfig cfg;
+    cfg.epochs = 1500;
+    cfg.batchSize = 1;
+    cfg.weightDecay = 0.0001;
+    cfg.gradClip = 1.0;
+
+    TrainingHistory h = trainer.fit(data, nullptr, cfg);
+    CSVLossExporter::exportHistory(h, "xor_loss.csv");
+    ModelSerializer::save(net, "xor.model");
+
+    Vector pred = net.predict({1.0, 0.0}); // Outputs ~1.0
+    return 0;
+}
+\end{lstlisting}
+
+% ==============================================================================
+% SECTION 12: CONCLUSION
+% ==============================================================================
+\section{Conclusion}
+
+MiniANN demonstrates that a complete neural-network simulation laboratory --- dense layers, eight activations, three loss functions, four optimisers, regularisation, gradient norm clipping, metrics, file persistence, terminal visualization, HTML reports, and an interactive desktop workbench featuring both 2D analytics and hardware-accelerated 3D OpenGL network rendering --- fits cleanly into dependency-free C++17/C++20 when structured around disciplined object-oriented programming.
+
+The strict encapsulation of mathematical invariants, coupled with flexible GoF design patterns (Strategy, Observer, Factory, Builder, Chain of Responsibility, Visitor, Composite, Fa\c{c}ade, and Bridge), produces an architecture that is simultaneously mathematically verifiable, highly extensible, and straightforward to inspect.
 
 \end{document}
