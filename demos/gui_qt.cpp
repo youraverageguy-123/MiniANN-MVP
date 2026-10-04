@@ -1161,6 +1161,8 @@ private:
         c.splitShuffle = m_splitShuffle;
         c.trainFrac = m_trainPct / 100.0;
         c.valFrac = m_valPct / 100.0;
+        c.hidden.clear();
+        c.hiddenActs.clear();
         for (int i = 0; i < (int)m_hidden.size(); ++i) {
             c.hidden.push_back(m_hidden[(std::size_t)i].n);
             c.hiddenActs.push_back(actToName(m_hidden[(std::size_t)i].act));
