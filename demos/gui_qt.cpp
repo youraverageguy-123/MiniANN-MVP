@@ -942,7 +942,10 @@ protected:
         }
         m_targetCol->setMaximum(std::max(0, cols - 1));
         m_targetCol->setValue(-1);
-        refreshConfigUi();
+        // Full invalidation (not just refreshConfigUi): a newly dropped file
+        // must discard the previous run's metrics and network diagram, or the
+        // UI shows one dataset's results next to another dataset's config.
+        configChanged();
     }
 
 private:
