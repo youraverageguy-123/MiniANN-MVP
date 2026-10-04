@@ -50,6 +50,8 @@
 #include <QDir>
 #include <QTextStream>
 #include <QFileInfo>
+#include <QList>
+#include <QPointer>
 
 #include "miniann/experiment.hpp"
 #include "miniann/serializer.hpp"
@@ -177,6 +179,7 @@ public:
         m_hasVal = hasVal && !m_val.empty();
         m_liveEpoch = liveEpoch;
         update();
+        pushMirrors();
     }
 
     void copyFrom(const PlotWidget& o) {
@@ -191,16 +194,32 @@ public:
     void mouseDoubleClickEvent(QMouseEvent*) override {
         if (m_train.size() < 2) return;
         auto* dlg = new QDialog(window());
-        dlg->setWindowTitle(m_accuracy ? QStringLiteral("Accuracy") : QStringLiteral("Loss curves"));
+        dlg->setWindowTitle((m_accuracy ? QStringLiteral("Accuracy (live)") : QStringLiteral("Loss curves (live)")));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(800, 560);
         auto* lay = new QVBoxLayout(dlg);
         lay->setContentsMargins(6, 6, 6, 6);
         auto* big = new PlotWidget;
         big->copyFrom(*this);
+        m_mirrors.push_back(big);
         lay->addWidget(big);
         dlg->show();
     }
+
+private:
+    // Enlarged popups mirror this widget: every state change is pushed to
+    // open popups (transitively), so a popup can never show a stale run or
+    // a stale architecture. QPointer auto-nulls on close; dead ones pruned.
+    void pushMirrors() {
+        for (int i = m_mirrors.size() - 1; i >= 0; --i) {
+            if (m_mirrors[i].isNull()) m_mirrors.removeAt(i);
+            else {
+                m_mirrors[i]->copyFrom(*this);
+                m_mirrors[i]->pushMirrors();
+            }
+        }
+    }
+    QList<QPointer<PlotWidget>> m_mirrors;
 
 protected:
     void paintEvent(QPaintEvent*) override {
@@ -369,12 +388,14 @@ public:
         m_x0 = x0; m_x1 = x1; m_y0 = y0; m_y1 = y1;
         m_ready = ready;
         update();
+        pushMirrors();
     }
 
     // Live predictor for hover tooltips (trained net, may be null).
     void setPredictor(std::shared_ptr<NeuralNetwork> net, double thresh = 0.5) {
         m_net = std::move(net);
         m_thresh = thresh;
+        pushMirrors();
     }
 
     void copyFrom(const BoundaryWidget& o) {
@@ -506,18 +527,30 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent*) override {
         if (!m_ready || m_grid.isNull()) return;
         auto* dlg = new QDialog(window());
-        dlg->setWindowTitle(QStringLiteral("Decision boundary"));
+        dlg->setWindowTitle(QStringLiteral("Decision boundary (live)"));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(800, 620);
         auto* lay = new QVBoxLayout(dlg);
         lay->setContentsMargins(6, 6, 6, 6);
         auto* big = new BoundaryWidget;
         big->copyFrom(*this);
+        m_mirrors.push_back(big);
         lay->addWidget(big);
         dlg->show();
     }
 
 private:
+    // See PlotWidget: enlarged popups mirror this widget live.
+    void pushMirrors() {
+        for (int i = m_mirrors.size() - 1; i >= 0; --i) {
+            if (m_mirrors[i].isNull()) m_mirrors.removeAt(i);
+            else {
+                m_mirrors[i]->copyFrom(*this);
+                m_mirrors[i]->pushMirrors();
+            }
+        }
+    }
+    QList<QPointer<BoundaryWidget>> m_mirrors;
     QImage m_grid;
     std::vector<QPointF> m_trainPts, m_testPts;
     std::vector<int> m_trainCls, m_testCls;
@@ -547,6 +580,7 @@ public:
         m_net.reset();
         m_tag = QStringLiteral("PREVIEW — edit config, then START TRAINING");
         update();
+        pushMirrors();
     }
     // Trained net: nodes show live firing on the probe input.
     void setNet(std::shared_ptr<NeuralNetwork> net, Vector probe, QString tag) {
@@ -555,6 +589,7 @@ public:
         m_tag = std::move(tag);
         m_arch.valid = false;
         update();
+        pushMirrors();
     }
     void copyFrom(const NetWidget& o) {
         m_arch = o.m_arch;
@@ -562,6 +597,18 @@ public:
         m_probe = o.m_probe;
         m_tag = o.m_tag;
         update();
+    }
+
+    // Enlarged popups mirror this widget (see PlotWidget): every state
+    // change is pushed out so a popup can never show a stale architecture.
+    void pushMirrors() {
+        for (int i = m_mirrors.size() - 1; i >= 0; --i) {
+            if (m_mirrors[i].isNull()) m_mirrors.removeAt(i);
+            else {
+                m_mirrors[i]->copyFrom(*this);
+                m_mirrors[i]->pushMirrors();
+            }
+        }
     }
 
 protected:
@@ -754,16 +801,20 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent*) override {
         auto* dlg = new QDialog(window());
-        dlg->setWindowTitle(m_tag.isEmpty() ? QStringLiteral("Network") : m_tag);
+        dlg->setWindowTitle(m_tag.isEmpty() ? QStringLiteral("Network (live)") : m_tag + QStringLiteral(" (live)"));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(900, 650);
         auto* lay = new QVBoxLayout(dlg);
         lay->setContentsMargins(6, 6, 6, 6);
         auto* big = new NetWidget;
         big->copyFrom(*this);
+        m_mirrors.push_back(big);
         lay->addWidget(big);
         dlg->show();
     }
+
+private:
+    QList<QPointer<NetWidget>> m_mirrors;
 
 private:
     ArchDesc m_arch;
