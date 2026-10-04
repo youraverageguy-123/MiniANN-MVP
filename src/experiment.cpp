@@ -86,8 +86,16 @@ std::tuple<Dataset, Dataset, Dataset> stratifiedSplit(const Dataset& raw, int nu
     }
     if (tr.size() == 0 || te.size() == 0)
         throw std::invalid_argument("stratifiedSplit: split leaves an empty part");
-    if (valFrac > 0.0 && va.size() == 0)
-        throw std::invalid_argument("stratifiedSplit: split leaves validation empty");
+    if (valFrac > 0.0 && va.size() == 0) {
+        if (tr.size() <= 1)
+            throw std::invalid_argument("stratifiedSplit: split leaves validation empty");
+        // Small classes each rounded their val slice to zero: move one train
+        // sample to validation so no part is empty (counts stay truthful).
+        va.add(tr.input(tr.size() - 1), tr.target(tr.size() - 1));
+        Dataset tr2;
+        for (std::size_t i = 0; i + 1 < tr.size(); ++i) tr2.add(tr.input(i), tr.target(i));
+        tr = std::move(tr2);
+    }
     return {tr, va, te};
 }
 
