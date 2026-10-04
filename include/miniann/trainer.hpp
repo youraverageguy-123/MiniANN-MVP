@@ -15,6 +15,9 @@ struct TrainingConfig {
     bool shuffle = true;
     unsigned seed = 42;
     int logEvery = 100;
+    // Throws std::invalid_argument for settings that would crash or make no
+    // sense (epochs < 1, logEvery < 1). Called by Trainer::fit().
+    void validate() const;
 };
 
 struct TrainingHistory {

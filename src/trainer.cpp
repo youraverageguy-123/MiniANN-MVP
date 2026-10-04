@@ -7,11 +7,19 @@
 
 namespace miniann {
 
+void TrainingConfig::validate() const {
+    if (epochs < 1)
+        throw std::invalid_argument("TrainingConfig: epochs must be >= 1");
+    if (logEvery < 1)
+        throw std::invalid_argument("TrainingConfig: logEvery must be >= 1");
+}
+
 Trainer::Trainer(NeuralNetwork& net, const ILoss& loss, IOptimizer& opt, ILogger* logger)
     : net_(net), loss_(loss), opt_(opt), logger_(logger) {}
 
 TrainingHistory Trainer::fit(const Dataset& train, const Dataset* validation,
                              const TrainingConfig& cfg, TrainingCallback* cb) {
+    cfg.validate(); // fail early with a clear message (logEvery==0 used to divide by zero)
     train.validate();
     if (validation) validation->validate();
     TrainingHistory hist;

@@ -45,7 +45,8 @@ MiniANN_MVP/
     trainer.hpp              # TrainingConfig, TrainingHistory (+acc), Trainer
     dataset.hpp              # Dataset, makeAnd/Or/XorGate
     metrics.hpp              # IMetric, Accuracy, ConfusionMatrix
-    logger.hpp               # LogLevel, ILogger, ConsoleLogger
+    logger.hpp               # LogLevel, ILogger, ConsoleLogger, FileLogger
+    callbacks.hpp            # EarlyStopping, CallbackList (TrainingCallback add-ons)
     serializer.hpp           # ModelSerializer, CSVLossExporter
     exporter.hpp             # re-export of serializer
     cli.hpp                  # header-only CLI: pick optimizer/activation/training
@@ -54,17 +55,20 @@ MiniANN_MVP/
   src/                       # one .cpp per header
     activation.cpp neuron.cpp layer.cpp network.cpp loss.cpp optimizer.cpp
     trainer.cpp dataset.cpp metrics.cpp logger.cpp serializer.cpp visualizer.cpp
+    callbacks.cpp
   demos/
     and_or_demo.cpp          # AND + OR, 2-2-1 sigmoid, SGD
     xor_demo.cpp             # XOR with CLI: --opt/--lr/--act/--epochs/--batch/--hidden/--live
     iris_demo.cpp            # data/iris_small.csv, 4-6-3, Adam, confusion matrix
     compare_demo.cpp         # §13: same net, SGD vs Momentum vs Adam table
+    early_stop_demo.cpp      # EarlyStopping + FileLogger + CallbackList on Iris
     playground.cpp           # §28: interactive dataset/arch/loss/opt/train/eval/predict
     gui_qt.cpp               # clickable Qt Widgets GUI (optional, needs Qt6)
   tests/
     test_basic.cpp           # activations, round-trip, dim-mismatch throws
     test_choices.cpp         # LeakyReLU/Swish values + finite-diff, factory sanity
     gradient_check.cpp       # centered finite-difference vs backprop
+    test_callbacks.cpp       # EarlyStopping, CallbackList, FileLogger, config validation
   data/
     iris_small.csv           # 30 rows, header, 4 features + label {0,1,2}
   docs/
@@ -313,6 +317,33 @@ Notes:
   needed (`TrainingHistory`, `TrainingCallback::shouldStop`), so these are
   pure UI additions.
 
+## Early stopping, callback list and file logging
+
+Three small classes plug into the existing interfaces without changing the
+network or trainer maths:
+
+| Class | Extends | What it does |
+|---|---|---|
+| `EarlyStopping(patience, minDelta)` | `TrainingCallback` | Watches validation loss (train loss if no validation set). Stops training when it has not improved by `minDelta` for `patience` epochs in a row. |
+| `CallbackList` | `TrainingCallback` | Composite: `Trainer::fit` takes one callback, so this forwards every epoch to several and stops if *any* asks to stop. |
+| `FileLogger(path, minLevel)` | `ILogger` | Same as `ConsoleLogger` but writes to a file and ignores messages below `minLevel`. |
+
+```cpp
+EarlyStopping stopper(100, 1e-4);
+CallbackList callbacks;
+callbacks.add(&liveView);   // any other TrainingCallback
+callbacks.add(&stopper);
+FileLogger logger("run.log");
+Trainer trainer(net, loss, opt, &logger);
+trainer.fit(train, &validation, cfg, &callbacks);
+```
+
+`TrainingConfig::validate()` (called by `Trainer::fit`) now rejects
+`epochs < 1` and `logEvery < 1` with `std::invalid_argument`; previously
+`logEvery = 0` crashed with a divide-by-zero.
+
+Try it: `.\early_stop_demo.exe` (run from the project root) and `.\test_callbacks.exe`.
+
 ## How to test (and what pass looks like)
 
 Run in order:
@@ -326,6 +357,8 @@ Run in order:
 .\iris_demo.exe
 .\compare_demo.exe
 .\playground.exe
+.\test_callbacks.exe
+.\early_stop_demo.exe
 ```
 
 ### 1. `test_basic.exe` — smoke test

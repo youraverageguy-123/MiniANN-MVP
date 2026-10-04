@@ -24,6 +24,7 @@ add_library(miniann
   src/normalize.cpp
   src/validate.cpp
   src/datasource.cpp
+  src/callbacks.cpp
 )
 target_include_directories(miniann PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -47,6 +48,9 @@ target_link_libraries(compare_demo miniann)
 add_executable(playground demos/playground.cpp)
 target_link_libraries(playground miniann)
 
+add_executable(early_stop_demo demos/early_stop_demo.cpp)
+target_link_libraries(early_stop_demo miniann)
+
 add_executable(gradient_check tests/gradient_check.cpp)
 target_link_libraries(gradient_check miniann)
 
@@ -64,6 +68,8 @@ target_link_libraries(test_correctness miniann)
 
 add_executable(test_patterns tests/test_patterns.cpp)
 target_link_libraries(test_patterns miniann)
+add_executable(test_callbacks tests/test_callbacks.cpp)
+target_link_libraries(test_callbacks miniann)
 
 add_test(NAME test_basic COMMAND test_basic)
 add_test(NAME test_choices COMMAND test_choices)
@@ -71,6 +77,7 @@ add_test(NAME gradient_check COMMAND gradient_check)
 add_test(NAME test_training COMMAND test_training)
 add_test(NAME test_correctness COMMAND test_correctness)
 add_test(NAME test_patterns COMMAND test_patterns)
+add_test(NAME test_callbacks COMMAND test_callbacks WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Optional native GUI: only built when Qt6 Widgets are available, so plain
 # `cmake -B build && cmake --build build` keeps working without them.
