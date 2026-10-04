@@ -39,14 +39,21 @@ $QTLIBS = @("-mwindows", "-LC:/msys64/ucrt64/lib", "-lQt6Widgets", "-lQt6Gui", "
 if (-not (Test-Path "obj")) { New-Item -ItemType Directory "obj" | Out-Null }
 
 $srcFiles = Get-ChildItem "src/*.cpp" | ForEach-Object { "src/$($_.Name)" }
-
+$headers = Get-ChildItem "include/miniann/*.hpp" -ErrorAction SilentlyContinue
+$newestHeaderTime = [DateTime]::MinValue
+if ($headers) {
+    $newestHeaderTime = ($headers | Measure-Object -Property LastWriteTime -Maximum).Maximum
+}
 
 # Incremental compilation check
 $toCompile = @()
 foreach ($src in $srcFiles) {
     $base = [System.IO.Path]::GetFileNameWithoutExtension($src)
     $obj = "obj/$base.o"
-    if ($Force -or (-not (Test-Path $obj)) -or ((Get-Item $src).LastWriteTime -gt (Get-Item $obj).LastWriteTime)) {
+    $stale = $Force -or (-not (Test-Path $obj)) -or `
+             ((Get-Item $src).LastWriteTime -gt (Get-Item $obj).LastWriteTime) -or `
+             ($newestHeaderTime -gt (Get-Item $obj).LastWriteTime)
+    if ($stale) {
         $toCompile += $src
     }
 }
@@ -68,7 +75,9 @@ $LIB = Get-ChildItem "obj/*.o" | ForEach-Object { $_.FullName }
 
 function Build-Target($name, $srcPath) {
     $exe = "$name.exe"
-    $needsBuild = $Force -or (-not (Test-Path $exe)) -or ((Get-Item $srcPath).LastWriteTime -gt (Get-Item $exe).LastWriteTime)
+    $needsBuild = $Force -or (-not (Test-Path $exe)) -or `
+                  ((Get-Item $srcPath).LastWriteTime -gt (Get-Item $exe).LastWriteTime) -or `
+                  ($newestHeaderTime -gt (Get-Item $exe).LastWriteTime)
     if (-not $needsBuild) {
         foreach ($o in $LIB) {
             if ((Get-Item $o).LastWriteTime -gt (Get-Item $exe).LastWriteTime) { $needsBuild = $true; break }
