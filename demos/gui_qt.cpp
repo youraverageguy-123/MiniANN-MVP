@@ -25,6 +25,7 @@
 #include <QHBoxLayout>
 #include <QFormLayout>
 #include <QDialog>
+#include <QPointer>
 #include <QDialogButtonBox>
 #include <QTableWidget>
 #include <QHeaderView>
@@ -193,8 +194,14 @@ public:
 
     void mouseDoubleClickEvent(QMouseEvent*) override {
         if (m_train.size() < 2) return;
+        if (m_expandedDlg) {
+            m_expandedDlg->raise();
+            m_expandedDlg->activateWindow();
+            return;
+        }
         auto* dlg = new QDialog(window());
-        dlg->setWindowTitle(m_accuracy ? QStringLiteral("Accuracy") : QStringLiteral("Loss curves"));
+        m_expandedDlg = dlg;
+        dlg->setWindowTitle(m_accuracy ? QStringLiteral("Accuracy curves") : QStringLiteral("Loss curves"));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(800, 560);
         auto* lay = new QVBoxLayout(dlg);
@@ -209,13 +216,13 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.fillRect(rect(), QColor(0x09, 0x0A, 0x0F));
+        p.fillRect(rect(), QColor(0x05, 0x07, 0x0C));
 
         const int ml = 52, mr = 14, mt = 32, mb = 28;
         QRect area(ml, mt, width() - ml - mr, height() - mt - mb);
         if (area.width() < 40 || area.height() < 40) return;
 
-        p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
+        p.setPen(QPen(QColor(0x1E, 0x29, 0x3B), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRect(area.adjusted(0, 0, -1, -1));
 
@@ -351,6 +358,7 @@ private:
     bool m_accuracy = false, m_hasVal = false;
     int m_liveEpoch = 0;
     int m_hover = -1;
+    QPointer<QDialog> m_expandedDlg;
 };
 
 // ------------------------------------------------------- decision boundary
@@ -397,11 +405,11 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.fillRect(rect(), QColor(0x09, 0x0A, 0x0F));
+        p.fillRect(rect(), QColor(0x05, 0x07, 0x0C));
         const int m = 14;
         QRect area(m, m + 16, width() - 2 * m, height() - 2 * m - 22);
         if (area.width() < 40 || area.height() < 40) return;
-        p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
+        p.setPen(QPen(QColor(0x1E, 0x29, 0x3B), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRect(area.adjusted(0, 0, -1, -1));
         if (!m_ready || m_grid.isNull()) {
@@ -508,7 +516,13 @@ protected:
 
     void mouseDoubleClickEvent(QMouseEvent*) override {
         if (!m_ready || m_grid.isNull()) return;
+        if (m_expandedDlg) {
+            m_expandedDlg->raise();
+            m_expandedDlg->activateWindow();
+            return;
+        }
         auto* dlg = new QDialog(window());
+        m_expandedDlg = dlg;
         dlg->setWindowTitle(QStringLiteral("Decision boundary"));
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(800, 620);
@@ -529,6 +543,7 @@ private:
     std::shared_ptr<NeuralNetwork> m_net;
     double m_thresh = 0.5;
     QPoint m_hover{-1, -1};
+    QPointer<QDialog> m_expandedDlg;
 };
 
 // ------------------------------------------------------- network diagram
@@ -571,21 +586,21 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing, true);
-        p.fillRect(rect(), QColor(0x09, 0x0A, 0x0F));
+        p.fillRect(rect(), QColor(0x05, 0x07, 0x0C));
         const int m = 14;
 
         // Top tag banner (strictly outside and above the neuron area)
         if (!m_tag.isEmpty()) {
             QRect tagBox(m, m, width() - 2 * m, 24);
-            p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
-            p.setBrush(QColor(0x13, 0x15, 0x20));
-            p.drawRoundedRect(tagBox, 4, 4);
+            p.setPen(QPen(QColor(0x1E, 0x29, 0x3B), 1));
+            p.setBrush(QColor(0x0A, 0x0E, 0x17));
+            p.drawRect(tagBox);
 
             QFont tf = font();
             tf.setPointSize(8);
             tf.setBold(true);
             p.setFont(tf);
-            p.setPen(QColor(0x8A, 0x90, 0xA0));
+            p.setPen(QColor(0x94, 0xA3, 0xB8));
             QString tag = fontMetrics().elidedText(m_tag, Qt::ElideRight, tagBox.width() - 16);
             p.drawText(tagBox.adjusted(10, 0, -10, 0), Qt::AlignLeft | Qt::AlignVCenter, tag);
         }
@@ -593,7 +608,7 @@ protected:
         // Bounding area for network nodes and edges: starts strictly below the tag banner
         QRect area(m, m + 30, width() - 2 * m, height() - 2 * m - 30 - 26);
         if (area.width() < 40 || area.height() < 40) return;
-        p.setPen(QPen(QColor(0x2E, 0x34, 0x48), 1));
+        p.setPen(QPen(QColor(0x1E, 0x29, 0x3B), 1));
         p.setBrush(Qt::NoBrush);
         p.drawRect(area.adjusted(0, 0, -1, -1));
 
@@ -756,8 +771,14 @@ protected:
     void leaveEvent(QEvent*) override { QToolTip::hideText(); }
 
     void mouseDoubleClickEvent(QMouseEvent*) override {
+        if (m_expandedDlg) {
+            m_expandedDlg->raise();
+            m_expandedDlg->activateWindow();
+            return;
+        }
         auto* dlg = new QDialog(window());
-        dlg->setWindowTitle(m_tag.isEmpty() ? QStringLiteral("Network") : m_tag);
+        m_expandedDlg = dlg;
+        dlg->setWindowTitle(m_tag.isEmpty() ? QStringLiteral("Network Architecture") : m_tag);
         dlg->setAttribute(Qt::WA_DeleteOnClose);
         dlg->resize(900, 650);
         auto* lay = new QVBoxLayout(dlg);
@@ -774,6 +795,7 @@ private:
     Vector m_probe;
     QString m_tag;
     std::vector<std::vector<QRectF>> m_hit;
+    QPointer<QDialog> m_expandedDlg;
 };
 
 // ---------------------------------------------------------------- main window
@@ -789,7 +811,7 @@ public:
 
         auto* line = new QFrame;
         line->setFixedHeight(1);
-        line->setStyleSheet(QStringLiteral("background:#1E2333; border:none;"));
+        line->setStyleSheet(QStringLiteral("background:#1E293B; border:none;"));
         outer->addWidget(line);
 
         m_head = new QPushButton;
@@ -799,7 +821,7 @@ public:
         m_head->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         m_head->setStyleSheet(QStringLiteral(
             "QPushButton { text-align:left; background:transparent; border:none;"
-            " border-radius:4px; padding:4px 6px; color:#94A3B8; font-weight:700; font-size:11px; letter-spacing:0.5px; }"
+            " border-radius:0px; padding:4px 6px; color:#94A3B8; font-weight:700; font-size:11px; letter-spacing:0.5px; }"
             "QPushButton:hover { background:rgba(255,255,255,0.04); color:#F1F5F9; }"));
         connect(m_head, &QPushButton::clicked, [this]() { setExpanded(!m_expanded); });
         outer->addWidget(m_head);
@@ -1180,12 +1202,12 @@ private:
         m_testAccLbl = new QLabel;
         auto makeStatChip = [](QLabel* lbl, const char* fg) {
             lbl->setStyleSheet(QString::asprintf(
-                "QLabel { background:#151B28; color:%s; border:1px solid #222D42; border-radius:6px; padding:5px 11px; font-family:'Consolas','Segoe UI',monospace; font-size:11px; font-weight:bold; }",
+                "QLabel { background:#0A0E17; color:%s; border:1px solid #1E293B; border-radius:0px; padding:5px 11px; font-family:'Consolas','Segoe UI',monospace; font-size:11px; font-weight:bold; }",
                 fg));
         };
-        makeStatChip(m_epochLbl, "#E2E8F0");
+        makeStatChip(m_epochLbl, "#F1F5F9");
         makeStatChip(m_trainLossLbl, "#FBBF24");
-        makeStatChip(m_trainAccLbl, "#60A5FA");
+        makeStatChip(m_trainAccLbl, "#38BDF8");
         makeStatChip(m_valAccLbl, "#F59E0B");
         makeStatChip(m_testAccLbl, "#34D399");
         topLay->addWidget(m_epochLbl);
@@ -1228,7 +1250,7 @@ private:
         preLbl->setStyleSheet(QStringLiteral("color:#64748B; font-weight:700; font-size:10px; letter-spacing:0.5px;"));
         preRow->addWidget(preLbl);
         auto* preWell = new QFrame;
-        preWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        preWell->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
         auto* preWellLay = new QHBoxLayout(preWell);
         preWellLay->setContentsMargins(2, 2, 2, 2);
         preWellLay->setSpacing(2);
@@ -1239,9 +1261,9 @@ private:
             b->setFixedHeight(26);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setStyleSheet(QStringLiteral(
-                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:600; padding:4px 8px; }"
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:11px; font-weight:600; padding:4px 8px; }"
                 "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
-                "QPushButton:pressed { background:#2563EB; color:#FFFFFF; }"));
+                "QPushButton:pressed { background:#0284C7; color:#FFFFFF; }"));
             preWellLay->addWidget(b);
             m_presetBtns.push_back(b);
         }
@@ -1256,7 +1278,7 @@ private:
         lv->addWidget(sec1);
         QVBoxLayout* s1 = sec1->content();
         auto* dsWell = new QFrame;
-        dsWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        dsWell->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
         auto* dsWellLay = new QHBoxLayout(dsWell);
         dsWellLay->setContentsMargins(2, 2, 2, 2);
         dsWellLay->setSpacing(2);
@@ -1267,9 +1289,9 @@ private:
             b->setFixedHeight(28);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setStyleSheet(QStringLiteral(
-                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:600; padding:4px 6px; }"
-                "QPushButton:hover { background:rgba(255,255,255,0.05); color:#F1F5F9; }"
-                "QPushButton:checked { background:#2563EB; color:#FFFFFF; border:1px solid #3B82F6; font-weight:bold; }"));
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:11px; font-weight:600; padding:4px 6px; }"
+                "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
+                "QPushButton:checked { background:#0284C7; color:#FFFFFF; border:1px solid #38BDF8; font-weight:bold; }"));
             dsWellLay->addWidget(b);
             m_dsBtns.push_back(b);
         }
@@ -1286,7 +1308,7 @@ private:
         auto* dsInfoPanel = new QFrame;
         dsInfoPanel->setObjectName(QStringLiteral("panel"));
         dsInfoPanel->setStyleSheet(QStringLiteral(
-            "background:#141824; border:1px solid #1E2333; border-radius:6px;"));
+            "background:#0A0E17; border:1px solid #1E293B; border-radius:0px;"));
         auto* dsInfoLay = new QVBoxLayout(dsInfoPanel);
         dsInfoLay->setContentsMargins(12, 10, 12, 10);
         dsInfoLay->setSpacing(0);
@@ -1339,7 +1361,7 @@ private:
         QVBoxLayout* s2 = sec2->content();
 
         auto* archCard = new QFrame;
-        archCard->setStyleSheet(QStringLiteral("background:#141824; border:1px solid #1E2333; border-radius:8px;"));
+        archCard->setStyleSheet(QStringLiteral("background:#0D111A; border:1px solid #1E293B; border-radius:0px;"));
         auto* archCardLay = new QVBoxLayout(archCard);
         archCardLay->setContentsMargins(12, 12, 12, 12);
         archCardLay->setSpacing(10);
@@ -1353,7 +1375,7 @@ private:
         layRow->addStretch(1);
 
         auto* stepWell = new QFrame;
-        stepWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        stepWell->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
         auto* stepWellLay = new QHBoxLayout(stepWell);
         stepWellLay->setContentsMargins(2, 2, 2, 2);
         stepWellLay->setSpacing(2);
@@ -1364,9 +1386,9 @@ private:
             btn->setFixedSize(28, 26);
             btn->setCursor(Qt::PointingHandCursor);
             btn->setStyleSheet(QStringLiteral(
-                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:14px; font-weight:bold; }"
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:14px; font-weight:bold; }"
                 "QPushButton:hover { background:rgba(255,255,255,0.08); color:#FFFFFF; }"
-                "QPushButton:pressed { background:#2563EB; color:#FFFFFF; }"));
+                "QPushButton:pressed { background:#0284C7; color:#FFFFFF; }"));
             stepWellLay->addWidget(btn);
         }
         connect(layMinus, &QPushButton::clicked, [this]() {
@@ -1386,13 +1408,13 @@ private:
 
         // Architecture summary badge / box
         auto* archSummaryBox = new QFrame;
-        archSummaryBox->setStyleSheet(QStringLiteral("background:#0E111A; border:1px solid #1E2333; border-radius:6px;"));
+        archSummaryBox->setStyleSheet(QStringLiteral("background:#06080E; border:1px solid #1E293B; border-radius:0px;"));
         auto* archSumLay = new QVBoxLayout(archSummaryBox);
         archSumLay->setContentsMargins(10, 8, 10, 8);
         archSumLay->setSpacing(4);
 
         m_archLbl = new QLabel;
-        m_archLbl->setStyleSheet(QStringLiteral("color:#60A5FA; font-weight:700; font-family:'Consolas','Segoe UI',monospace; font-size:12px;"));
+        m_archLbl->setStyleSheet(QStringLiteral("color:#38BDF8; font-weight:700; font-family:'Consolas','Segoe UI',monospace; font-size:12px;"));
         m_archLbl->setWordWrap(true);
         archSumLay->addWidget(m_archLbl);
 
@@ -1464,7 +1486,7 @@ private:
         QVBoxLayout* s3 = sec3->content();
 
         auto* trainCard = new QFrame;
-        trainCard->setStyleSheet(QStringLiteral("background:#141824; border:1px solid #1E2333; border-radius:8px;"));
+        trainCard->setStyleSheet(QStringLiteral("background:#0D111A; border:1px solid #1E293B; border-radius:0px;"));
         auto* trainCardLay = new QVBoxLayout(trainCard);
         trainCardLay->setContentsMargins(12, 12, 12, 12);
         trainCardLay->setSpacing(12);
@@ -1479,7 +1501,7 @@ private:
         epTop->addWidget(epLab);
         epTop->addStretch(1);
         m_epochValLbl = new QLabel;
-        m_epochValLbl->setStyleSheet(QStringLiteral("color:#60A5FA; background:#0E111A; border:1px solid #1E2333; border-radius:4px; padding:2px 8px; font-family:'Consolas',monospace; font-weight:bold; font-size:11px;"));
+        m_epochValLbl->setStyleSheet(QStringLiteral("color:#38BDF8; background:#06080E; border:1px solid #1E293B; border-radius:0px; padding:2px 8px; font-family:'Consolas',monospace; font-weight:bold; font-size:11px;"));
         epTop->addWidget(m_epochValLbl);
         epGroup->addLayout(epTop);
 
@@ -1512,7 +1534,7 @@ private:
         epRow->addWidget(m_epochSpin);
 
         auto* epStepWell = new QFrame;
-        epStepWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        epStepWell->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
         auto* epStepLay = new QHBoxLayout(epStepWell);
         epStepLay->setContentsMargins(2, 2, 2, 2);
         epStepLay->setSpacing(2);
@@ -1523,9 +1545,9 @@ private:
             btn->setFixedHeight(26);
             btn->setCursor(Qt::PointingHandCursor);
             btn->setStyleSheet(QStringLiteral(
-                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:bold; padding:2px 6px; }"
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:11px; font-weight:bold; padding:2px 6px; }"
                 "QPushButton:hover { background:rgba(255,255,255,0.08); color:#FFFFFF; }"
-                "QPushButton:pressed { background:#2563EB; color:#FFFFFF; }"));
+                "QPushButton:pressed { background:#0284C7; color:#FFFFFF; }"));
             epStepLay->addWidget(btn);
         }
         connect(epMinus, &QPushButton::clicked, [this]() {
@@ -1647,7 +1669,7 @@ private:
         QVBoxLayout* s4 = sec4->content();
 
         auto* optCard = new QFrame;
-        optCard->setStyleSheet(QStringLiteral("background:#141824; border:1px solid #1E2333; border-radius:8px;"));
+        optCard->setStyleSheet(QStringLiteral("background:#0D111A; border:1px solid #1E293B; border-radius:0px;"));
         auto* optCardLay = new QVBoxLayout(optCard);
         optCardLay->setContentsMargins(12, 12, 12, 12);
         optCardLay->setSpacing(10);
@@ -1658,7 +1680,7 @@ private:
         optCardLay->addWidget(lossLbl);
 
         auto* lossWell = new QFrame;
-        lossWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        lossWell->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
         auto* lossWellLay = new QHBoxLayout(lossWell);
         lossWellLay->setContentsMargins(2, 2, 2, 2);
         lossWellLay->setSpacing(2);
@@ -1669,9 +1691,9 @@ private:
             b->setFixedHeight(28);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setStyleSheet(QStringLiteral(
-                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:600; }"
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:11px; font-weight:600; }"
                 "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
-                "QPushButton:checked { background:#2563EB; color:#FFFFFF; font-weight:bold; }"));
+                "QPushButton:checked { background:#0284C7; color:#FFFFFF; border:1px solid #38BDF8; font-weight:bold; }"));
             lossWellLay->addWidget(b);
             m_lossBtns.push_back(b);
         }
@@ -1690,7 +1712,7 @@ private:
         optCardLay->addWidget(optLbl);
 
         auto* optWell = new QFrame;
-        optWell->setStyleSheet(QStringLiteral("background:#121520; border:1px solid #1E2333; border-radius:6px;"));
+        optWell->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
         auto* optWellLay = new QHBoxLayout(optWell);
         optWellLay->setContentsMargins(2, 2, 2, 2);
         optWellLay->setSpacing(2);
@@ -1701,9 +1723,9 @@ private:
             b->setFixedHeight(28);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setStyleSheet(QStringLiteral(
-                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:4px; font-size:11px; font-weight:600; }"
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:11px; font-weight:600; }"
                 "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
-                "QPushButton:checked { background:#2563EB; color:#FFFFFF; font-weight:bold; }"));
+                "QPushButton:checked { background:#0284C7; color:#FFFFFF; border:1px solid #38BDF8; font-weight:bold; }"));
             optWellLay->addWidget(b);
             m_optBtns.push_back(b);
         }
@@ -1993,36 +2015,36 @@ private:
 
     void applyTheme() {
         setStyleSheet(QStringLiteral(
-            "QMainWindow, QWidget#qt_top { background:#090B10; }"
-            "QFrame#topbar { background:#0E111A; border:none; border-bottom:1px solid #1E2333; }"
-            "QFrame#card { background:#0E111A; border:1px solid #1E2333; border-radius:8px; }"
-            "QFrame#panel { background:#141824; border:1px solid #1E2333; border-radius:6px; }"
+            "QMainWindow, QWidget#qt_top { background:#05070B; }"
+            "QFrame#topbar { background:#0A0D15; border:none; border-bottom:1px solid #1E293B; }"
+            "QFrame#card { background:#0A0E17; border:1px solid #1E293B; border-radius:0px; }"
+            "QFrame#panel { background:#0D121E; border:1px solid #1E293B; border-radius:0px; }"
             "QLabel { color:#E2E8F0; }"
-            "QPushButton { background:#151824; color:#E2E8F0; border:1px solid #1E2333; border-radius:6px; padding:6px 12px; font-weight:500; }"
-            "QPushButton:hover { background:#1D2232; border:1px solid #3B82F6; }"
-            "QPushButton:checked { background:#2563EB; color:#FFFFFF; border:1px solid #60A5FA; }"
-            "QPushButton:disabled { background:#0F121C; color:#475569; border:1px solid #181D2A; }"
-            "QPushButton#trainBtn { background:qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669); color:#FFFFFF; border:none; border-radius:6px; }"
-            "QPushButton#trainBtn:hover { background:#10B981; }"
-            "QPushButton#stopBtn { background:qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #EF4444, stop:1 #B91C1C); color:#FFFFFF; border:none; border-radius:6px; }"
-            "QPushButton#stopBtn:hover { background:#DC2626; }"
-            "QSlider::groove:horizontal { background:#1A1F2E; height:5px; border-radius:2px; }"
-            "QSlider::handle:horizontal { background:#F8FAFC; border:1px solid #3B82F6; width:13px; height:13px; margin:-4px 0; border-radius:6px; }"
-            "QSlider::sub-page:horizontal { background:#3B82F6; border-radius:2px; }"
-            "QSpinBox, QComboBox, QDoubleSpinBox { background:#151824; color:#F1F5F9; border:1px solid #1E2333; border-radius:6px; padding:4px 8px; }"
-            "QComboBox QAbstractItemView { background:#151824; color:#F1F5F9; selection-background-color:#2563EB; border:1px solid #1E2333; }"
+            "QPushButton { background:#0F1420; color:#E2E8F0; border:1px solid #1E293B; border-radius:0px; padding:6px 12px; font-weight:500; }"
+            "QPushButton:hover { background:#1E293B; border:1px solid #38BDF8; }"
+            "QPushButton:checked { background:#0284C7; color:#FFFFFF; border:1px solid #38BDF8; font-weight:bold; }"
+            "QPushButton:disabled { background:#080B12; color:#475569; border:1px solid #151C2A; }"
+            "QPushButton#trainBtn { background:qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10B981, stop:1 #059669); color:#FFFFFF; border:1px solid #059669; border-radius:0px; font-weight:bold; }"
+            "QPushButton#trainBtn:hover { background:#10B981; border:1px solid #34D399; }"
+            "QPushButton#stopBtn { background:qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #EF4444, stop:1 #B91C1C); color:#FFFFFF; border:1px solid #B91C1C; border-radius:0px; font-weight:bold; }"
+            "QPushButton#stopBtn:hover { background:#DC2626; border:1px solid #F87171; }"
+            "QSlider::groove:horizontal { background:#151C2A; height:4px; border-radius:0px; }"
+            "QSlider::handle:horizontal { background:#38BDF8; border:1px solid #0284C7; width:12px; height:12px; margin:-4px 0; border-radius:0px; }"
+            "QSlider::sub-page:horizontal { background:#0284C7; border-radius:0px; }"
+            "QSpinBox, QComboBox, QDoubleSpinBox { background:#0F1420; color:#F1F5F9; border:1px solid #1E293B; border-radius:0px; padding:4px 8px; }"
+            "QComboBox QAbstractItemView { background:#0F1420; color:#F1F5F9; selection-background-color:#0284C7; border:1px solid #1E293B; }"
             "QCheckBox { color:#94A3B8; }"
-            "QStatusBar { background:#090B10; color:#64748B; border-top:1px solid #1E2333; }"
-            "QToolTip { background:#0F172A; color:#F8FAFC; border:1px solid #334155; border-radius:6px; padding:6px; font-size:11px; }"
-            "QTableWidget { background:#151824; color:#F8FAFC; gridline-color:#1E2333; border:1px solid #1E2333; border-radius:6px; }"
+            "QStatusBar { background:#05070B; color:#64748B; border-top:1px solid #1E293B; }"
+            "QToolTip { background:#0A0E17; color:#F8FAFC; border:1px solid #1E293B; border-radius:0px; padding:6px; font-size:11px; }"
+            "QTableWidget { background:#0F1420; color:#F8FAFC; gridline-color:#1E293B; border:1px solid #1E293B; border-radius:0px; }"
             "QScrollArea { background:transparent; border:none; }"
             "QScrollBar:vertical { background:transparent; width:8px; margin:0; border:none; }"
-            "QScrollBar::handle:vertical { background:#1E2333; min-height:24px; border-radius:4px; }"
-            "QScrollBar::handle:vertical:hover { background:#2E374D; }"
+            "QScrollBar::handle:vertical { background:#1E293B; min-height:24px; border-radius:0px; }"
+            "QScrollBar::handle:vertical:hover { background:#334155; }"
             "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; border:none; }"
             "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:none; border:none; }"
-            "QHeaderView::section { background:#151824; color:#94A3B8; border:1px solid #1E2333; padding:5px; }"
-            "QDialog { background:#0E111A; }"
+            "QHeaderView::section { background:#0F1420; color:#94A3B8; border:1px solid #1E293B; padding:5px; }"
+            "QDialog { background:#0A0E17; border:1px solid #1E293B; }"
         ));
     }
 
@@ -2290,7 +2312,7 @@ private:
     }
 
     static QString badgeStyle(const char* bg, const char* fg) {
-        return QString::asprintf("background:%s; color:%s; border-radius:6px; font-weight:bold;", bg, fg);
+        return QString::asprintf("background:%s; color:%s; border-radius:0px; border:1px solid rgba(255,255,255,0.15); font-weight:bold;", bg, fg);
     }
 
     // Per-tick change caches: refreshLiveUi runs at 10 Hz, and touching a
