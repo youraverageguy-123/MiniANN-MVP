@@ -18,6 +18,7 @@
 #include "miniann/serializer.hpp"
 #include "miniann/cli.hpp"
 #include "miniann/visualizer.hpp"
+#include "miniann/report.hpp"
 
 using namespace miniann;
 
@@ -91,8 +92,17 @@ int main() {
                   << " out=" << raw.target(0).size() << "\n";
 
         double split = std::stod(line("train fraction 0..1", "0.8"));
+        if (split <= 0.0 || split >= 1.0) split = 0.8;
         std::mt19937 srng(42);
         auto [trFull, teFull] = raw.split(split, srng);
+        if (trFull.size() == 0 || teFull.size() == 0) {
+            std::size_t nTrain = std::max(std::size_t(1), std::min(raw.size() - 1, std::size_t(double(raw.size()) * split)));
+            trFull = Dataset(); teFull = Dataset();
+            for (std::size_t i = 0; i < raw.size(); ++i) {
+                if (i < nTrain) trFull.add(raw.input(i), raw.target(i));
+                else teFull.add(raw.input(i), raw.target(i));
+            }
+        }
 
         // ---- architecture (in/out auto-configured from the dataset) ----
         int inDim = int(raw.input(0).size());
@@ -149,23 +159,24 @@ int main() {
         cfg.epochs = epochs; cfg.batchSize = std::size_t(batch);
         cfg.shuffle = true; cfg.seed = seed; cfg.logEvery = std::max(1, epochs / 10);
         std::cout << "\n[TRAIN] live view below (redraws as it learns)\n";
-        LiveConsole live(net, trFull.input(0), "MiniANN live", epochs,
+        Vector probe = trFull.size() > 0 ? trFull.input(0) : raw.input(0);
+        LiveConsole live(net, probe, "MiniANN live", epochs,
                          std::max(1, epochs / 60));
         TrainingHistory h = trainer.fit(trFull, &teFull, cfg, &live);
         CSVLossExporter::exportHistory(h, "playground_loss.csv");
         ModelSerializer::save(net, "playground.model");
         std::cout << "saved playground.model + playground_loss.csv\n";
 
-        HtmlReport report("MiniANN playground run");
-        ReportSeries rs;
-        rs.name = optName + " lr=" + std::to_string(lr);
-        rs.loss = h.trainLoss;
-        rs.acc = h.trainAcc;
-        report.addSeries(rs);
-        report.setBoundary(&net, &trFull);
-        report.addPre("network structure", ng.render());
         WeightsTable wt(net);
-        report.addPre("learned weights", wt.render());
+        HtmlReport report = HtmlReportBuilder("MiniANN playground run")
+                                .withSeries(optName + " lr=" + std::to_string(lr), h)
+                                .withBoundary(net, trFull)
+                                .withPre("network structure", ng.render())
+                                .withPre("learned weights", wt.render())
+                                .withSummary(h.trainLoss.empty() ? 0.0 : h.trainLoss.back(),
+                                             h.trainAcc.empty() ? 0.0 : h.trainAcc.back(),
+                                             epochs, optName, lr)
+                                .build();
         report.save("playground_report.html");
         std::cout << "HTML report -> playground_report.html (open in a browser)\n";
 

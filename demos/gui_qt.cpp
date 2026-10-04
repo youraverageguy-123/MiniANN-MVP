@@ -50,9 +50,12 @@
 #include <QDir>
 #include <QTextStream>
 #include <QFileInfo>
+#include <QDesktopServices>
 
 #include "miniann/experiment.hpp"
 #include "miniann/serializer.hpp"
+#include "miniann/report.hpp"
+#include "miniann/visualizer.hpp"
 
 #include <vector>
 #include <string>
@@ -1016,7 +1019,7 @@ private:
     QLabel* m_summaryLbl = nullptr;
     QLabel* m_progressLbl = nullptr;
     QPushButton* m_trainBtn = nullptr;
-    QPushButton* m_saveBtn = nullptr, *m_loadBtn = nullptr;
+    QPushButton* m_saveBtn = nullptr, *m_loadBtn = nullptr, *m_reportBtn = nullptr;
     QPushButton* m_tabLoss = nullptr, *m_tabAcc = nullptr, *m_tabBnd = nullptr, *m_tabNet = nullptr;
     PlotWidget* m_plot = nullptr;
     BoundaryWidget* m_boundary = nullptr;
@@ -1399,8 +1402,38 @@ private:
         archSumLay->addWidget(m_hiddenSumLbl);
         archCardLay->addWidget(archSummaryBox);
 
+        // Topology Preset row
+        auto* presetRow = new QHBoxLayout;
+        presetRow->setSpacing(8);
+        auto* presetLbl = new QLabel(QStringLiteral("Preset:"));
+        presetLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:600;"));
+        presetRow->addWidget(presetLbl);
+        presetRow->addStretch(1);
+        auto* presetCombo = new QComboBox;
+        presetCombo->addItem(QStringLiteral("Custom"));
+        presetCombo->addItem(QStringLiteral("Minimal [4]"));
+        presetCombo->addItem(QStringLiteral("Standard [8, 8]"));
+        presetCombo->addItem(QStringLiteral("Deep [16, 8, 4]"));
+        presetCombo->addItem(QStringLiteral("Wide [32]"));
+        presetCombo->setCurrentIndex(2); // Standard [8, 8]
+        presetCombo->setMinimumWidth(125);
+        connect(presetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int idx) {
+            if (idx == 1) { // Minimal [4]
+                m_hidden = {{4, ACT_RELU}};
+            } else if (idx == 2) { // Standard [8, 8]
+                m_hidden = {{8, ACT_TANH}, {8, ACT_RELU}};
+            } else if (idx == 3) { // Deep [16, 8, 4]
+                m_hidden = {{16, ACT_RELU}, {8, ACT_RELU}, {4, ACT_RELU}};
+            } else if (idx == 4) { // Wide [32]
+                m_hidden = {{32, ACT_RELU}};
+            }
+            configChanged();
+        });
+        presetRow->addWidget(presetCombo);
+        archCardLay->addLayout(presetRow);
+
         // Configure button (full width rectangular button)
-        m_hiddenCfgBtn = makeBtn(QStringLiteral("Configure hidden layers…"));
+        m_hiddenCfgBtn = makeBtn(QStringLiteral("Custom Layers Detail…"));
         m_hiddenCfgBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         connect(m_hiddenCfgBtn, &QPushButton::clicked, [this]() { openHiddenDialog(); });
         archCardLay->addWidget(m_hiddenCfgBtn);
@@ -1792,11 +1825,16 @@ private:
         modelRow->setSpacing(8);
         m_saveBtn = makeBtn(QStringLiteral("SAVE MODEL"));
         m_loadBtn = makeBtn(QStringLiteral("LOAD MODEL"));
+        m_reportBtn = makeBtn(QStringLiteral("EXPORT REPORT"));
         m_saveBtn->setEnabled(false);
+        m_reportBtn->setEnabled(false);
+        m_reportBtn->setToolTip(QStringLiteral("Generate standalone HTML/SVG experiment report and open in web browser"));
         connect(m_saveBtn, &QPushButton::clicked, [this]() { onSaveModel(); });
         connect(m_loadBtn, &QPushButton::clicked, [this]() { onLoadModel(); });
+        connect(m_reportBtn, &QPushButton::clicked, [this]() { onExportReport(); });
         modelRow->addWidget(m_saveBtn, 1);
         modelRow->addWidget(m_loadBtn, 1);
+        modelRow->addWidget(m_reportBtn, 1);
         outer->addLayout(modelRow);
 
         // Dedicated pacing & step control row (clean spacing, responsive controls)
@@ -2307,6 +2345,7 @@ private:
         int e = en ? 1 : 0;
         if (e != m_cSaveEn) {
             m_saveBtn->setEnabled(en);
+            if (m_reportBtn) m_reportBtn->setEnabled(en);
             m_cSaveEn = e;
         }
     }
@@ -2678,6 +2717,56 @@ private:
         connect(buttons, &QDialogButtonBox::rejected, dlg, &QDialog::close);
         lay->addWidget(buttons);
         dlg->show();
+    }
+
+    void onExportReport() {
+        std::shared_ptr<NeuralNetwork> net;
+        Dataset trainData;
+        TrainingHistory hist;
+        std::string optName, lossName, dsDesc;
+        int epochs = 0;
+        double finalLoss = 0.0, finalAcc = 0.0, lr = 0.01;
+
+        {
+            std::lock_guard<std::mutex> lock(g_bridge.mtx);
+            if (!g_bridge.hasResult || !g_bridge.lastNet) {
+                QMessageBox::information(this, QStringLiteral("Export Report"),
+                    QStringLiteral("Please complete at least one training run before exporting a report."));
+                return;
+            }
+            net = g_bridge.lastNet;
+            trainData = g_bridge.lastTrain;
+            optName = g_bridge.lastOptDesc;
+            lossName = g_bridge.lastLoss;
+            dsDesc = g_bridge.lastDsDesc;
+            epochs = g_bridge.lastEpochsRun;
+            finalLoss = g_bridge.lastTrainLoss;
+            finalAcc = g_bridge.lastTrainAcc;
+            for (float v : g_bridge.trainLoss) hist.trainLoss.push_back((double)v);
+            for (float v : g_bridge.valLoss) hist.validationLoss.push_back((double)v);
+            for (float v : g_bridge.trainAcc) hist.trainAcc.push_back((double)v);
+            for (float v : g_bridge.valAcc) hist.validationAcc.push_back((double)v);
+        }
+
+        try {
+            NetworkGraph ng(*net);
+            WeightsTable wt(*net);
+            HtmlReport report = HtmlReportBuilder(std::string("MiniANN Workbench Report: ") + (dsDesc.empty() ? "Model" : dsDesc))
+                                    .withSeries(optName.empty() ? "optimizer" : optName, hist)
+                                    .withBoundary(*net, trainData)
+                                    .withPre("network structure", ng.render())
+                                    .withPre("learned weights", wt.render())
+                                    .withSummary(finalLoss, finalAcc, epochs, optName, lr)
+                                    .build();
+            std::string filename = "workbench_report.html";
+            report.save(filename);
+            QFileInfo fi(QString::fromStdString(filename));
+            QUrl fileUrl = QUrl::fromLocalFile(fi.absoluteFilePath());
+            QDesktopServices::openUrl(fileUrl);
+        } catch (const std::exception& e) {
+            QMessageBox::warning(this, QStringLiteral("Export Report Error"),
+                QString::fromStdString(std::string("Could not generate report:\n") + e.what()));
+        }
     }
 
     void onSaveModel() {
