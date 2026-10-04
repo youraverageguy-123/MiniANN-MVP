@@ -11,31 +11,50 @@ Neuron::Neuron(std::size_t numInputs, std::size_t numOutputs, ActivationPtr act,
     gradWeights_.assign(numInputs, 0.0);
     gradBias_ = 0.0;
     weights_.resize(numInputs);
-    switch (initMethod) {
-        case WeightInit::Uniform: {
-            std::uniform_real_distribution<double> d(-1.0, 1.0);
-            for (auto& w : weights_) w = d(rng);
-            std::uniform_real_distribution<double> db(-0.5, 0.5);
-            bias_ = db(rng);
-            break;
-        }
-        case WeightInit::Xavier: {
-            if (numInputs + numOutputs == 0)
-                throw std::invalid_argument("Neuron: Xavier needs fanIn+fanOut > 0");
-            double limit = std::sqrt(6.0 / double(numInputs + numOutputs));
-            std::uniform_real_distribution<double> d(-limit, limit);
-            for (auto& w : weights_) w = d(rng);
-            bias_ = 0.0;
-            break;
-        }
-        case WeightInit::He: {
-            double std = numInputs > 0 ? std::sqrt(2.0 / double(numInputs)) : 1.0;
-            std::normal_distribution<double> d(0.0, std);
-            for (auto& w : weights_) w = d(rng);
-            bias_ = 0.0;
-            break;
-        }
+    WeightInitFactory::create(initMethod)->initialize(weights_, bias_, numInputs, numOutputs, rng);
+}
+
+void UniformInit::initialize(Vector& weights, double& bias, std::size_t,
+                             std::size_t, std::mt19937& rng) const {
+    std::uniform_real_distribution<double> d(-1.0, 1.0);
+    for (auto& w : weights) w = d(rng);
+    std::uniform_real_distribution<double> db(-0.5, 0.5);
+    bias = db(rng);
+}
+
+void XavierInit::initialize(Vector& weights, double& bias, std::size_t numInputs,
+                             std::size_t numOutputs, std::mt19937& rng) const {
+    if (numInputs + numOutputs == 0)
+        throw std::invalid_argument("XavierInit: needs fanIn+fanOut > 0");
+    double limit = std::sqrt(6.0 / double(numInputs + numOutputs));
+    std::uniform_real_distribution<double> d(-limit, limit);
+    for (auto& w : weights) w = d(rng);
+    bias = 0.0;
+}
+
+void HeInit::initialize(Vector& weights, double& bias, std::size_t numInputs,
+                        std::size_t, std::mt19937& rng) const {
+    double std = numInputs > 0 ? std::sqrt(2.0 / double(numInputs)) : 1.0;
+    std::normal_distribution<double> d(0.0, std);
+    for (auto& w : weights) w = d(rng);
+    bias = 0.0;
+}
+
+std::unique_ptr<IWeightInit> WeightInitFactory::create(WeightInit method) {
+    switch (method) {
+        case WeightInit::Uniform: return std::make_unique<UniformInit>();
+        case WeightInit::Xavier:  return std::make_unique<XavierInit>();
+        case WeightInit::He:      return std::make_unique<HeInit>();
     }
+    throw std::invalid_argument("WeightInitFactory: unknown method");
+}
+
+std::unique_ptr<IWeightInit> WeightInitFactory::create(const std::string& name) {
+    if (name == "uniform") return std::make_unique<UniformInit>();
+    if (name == "xavier")  return std::make_unique<XavierInit>();
+    if (name == "he")      return std::make_unique<HeInit>();
+    throw std::invalid_argument("WeightInitFactory: unknown init '" + name +
+                                "' (choose uniform|xavier|he)");
 }
 
 double Neuron::forward(const Vector& inputs) {

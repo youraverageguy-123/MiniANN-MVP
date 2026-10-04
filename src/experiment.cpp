@@ -1,5 +1,8 @@
 #include "miniann/experiment.hpp"
+#include "miniann/datasource.hpp"
+#include "miniann/normalize.hpp"
 #include "miniann/serializer.hpp"
+#include "miniann/validate.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -55,7 +58,7 @@ Dataset oneHot(const Dataset& raw, int k) {
 // making val/test accuracy jump in 33% steps of pure noise.
 std::tuple<Dataset, Dataset, Dataset> stratifiedSplit(const Dataset& raw, int numClasses,
                                                       double trainFrac, double valFrac,
-                                                      unsigned seed) {
+                                                      unsigned seed, bool doShuffle = true) {
     std::vector<std::vector<std::size_t>> byClass{std::size_t(numClasses)};
     for (std::size_t i = 0; i < raw.size(); ++i) {
         int c = int(raw.target(i)[0]);
@@ -69,7 +72,7 @@ std::tuple<Dataset, Dataset, Dataset> stratifiedSplit(const Dataset& raw, int nu
     for (int c = 0; c < numClasses; ++c) {
         auto& idx = byClass[std::size_t(c)];
         if (idx.empty()) continue;
-        std::shuffle(idx.begin(), idx.end(), rng);
+        if (doShuffle) std::shuffle(idx.begin(), idx.end(), rng);
         std::size_t n = idx.size();
         std::size_t nTrain = std::size_t(double(n) * trainFrac);
         std::size_t nVal = (valFrac > 0.0) ? std::size_t(double(n) * valFrac) : 0;
@@ -113,66 +116,9 @@ WeightInit initForActivation(const std::string& act) {
     return WeightInit::Xavier;
 }
 
-// Fit normalization on the TRAIN inputs only, apply to every split.
-struct NormStats {
-    int mode = 0;
-    Vector scale, lo; // maxabs: scale=m; minmax: lo/hi via scale=range
-    Vector hi;
-};
-
-NormStats fitNorm(const Dataset& train, int mode) {
-    NormStats st;
-    st.mode = mode;
-    if (train.size() == 0 || mode == 0) return st;
-    std::size_t dim = train.input(0).size();
-    if (mode == 1) {
-        // Per-feature max-abs: each feature is scaled by its own peak so
-        // small-magnitude features (e.g. Iris petal width 0.1..2.5) keep a
-        // usable signal instead of being squashed by the global maximum
-        // (e.g. sepal length ~7.9). Fit on TRAIN inputs only.
-        st.scale.assign(dim, 0.0);
-        for (std::size_t i = 0; i < train.size(); ++i) {
-            const Vector& x = train.input(i);
-            for (std::size_t j = 0; j < dim; ++j)
-                st.scale[j] = std::max(st.scale[j], std::abs(x[j]));
-        }
-        for (std::size_t j = 0; j < dim; ++j)
-            if (st.scale[j] == 0.0) st.scale[j] = 1.0;
-    } else {
-        st.lo = train.input(0);
-        st.hi = train.input(0);
-        for (std::size_t i = 1; i < train.size(); ++i) {
-            const Vector& x = train.input(i);
-            for (std::size_t j = 0; j < dim; ++j) {
-                st.lo[j] = std::min(st.lo[j], x[j]);
-                st.hi[j] = std::max(st.hi[j], x[j]);
-            }
-        }
-    }
-    return st;
-}
-
-Vector applyNorm(const Vector& x, const NormStats& st) {
-    if (st.mode == 0) return x;
-    Vector y = x;
-    if (st.mode == 1) {
-        for (std::size_t j = 0; j < y.size(); ++j) y[j] /= st.scale[j];
-    } else {
-        for (std::size_t j = 0; j < y.size(); ++j) {
-            double r = st.hi[j] - st.lo[j];
-            y[j] = (r == 0.0) ? 0.0 : (y[j] - st.lo[j]) / r;
-        }
-    }
-    return y;
-}
-
-Dataset normDataset(const Dataset& d, const NormStats& st) {
-    if (st.mode == 0) return d;
-    Dataset out;
-    for (std::size_t i = 0; i < d.size(); ++i)
-        out.add(applyNorm(d.input(i), st), d.target(i));
-    return out;
-}
+// NOTE: feature normalization lives in INormalizer subclasses
+// (normalize.hpp) now; the struct/functions that used to sit here were
+// replaced by that Strategy hierarchy with identical per-feature semantics.
 
 // Forwards epochs to the UI callback and exposes the stop flag to the trainer.
 struct ControlCallback : public TrainingCallback {
@@ -192,43 +138,57 @@ struct ControlCallback : public TrainingCallback {
 PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
     Dataset raw;
     std::string name;
-    if (cfg.dataset == "and")      { raw = makeAndGate(); name = "AND"; }
-    else if (cfg.dataset == "or")  { raw = makeOrGate();  name = "OR"; }
-    else if (cfg.dataset == "xor") { raw = makeXorGate(); name = "XOR"; }
-    else if (cfg.dataset == "iris") {
-        raw = Dataset::loadCSV("data/iris_small.csv", true, 4, 1);
-        name = "Iris";
-    } else if (cfg.dataset == "csv") {
-        if (cfg.csvPath.empty())
-            throw std::runtime_error("No CSV file selected (drop a .csv file onto the window or use Browse).");
-        int col = cfg.targetCol;
-        if (col < 0) {
-            int total = csvColumnCount(cfg.csvPath);
-            col = (total > 0) ? (total - 1) : 0;
-        }
-        raw = Dataset::loadCSV(cfg.csvPath, cfg.header, col, 1);
-        name = "CSV";
-    } else {
-        throw std::invalid_argument("Unknown dataset '" + cfg.dataset + "'");
+    int srcCol = 0;
+    std::string srcNote;
+    try {
+        // Dataset kinds are polymorphic sources behind a factory: adding one
+        // never touches this function (Open/Closed Principle in action).
+        auto source = DatasetSourceFactory::create(cfg.dataset);
+        LoadedRaw loaded = source->load(cfg);
+        raw = std::move(loaded.data);
+        name = loaded.name;
+        srcCol = loaded.targetCol;
+        srcNote = loaded.note;
+        raw.validate();
+    } catch (const std::exception& e) {
+        throw std::runtime_error(std::string("Dataset '") + (name.empty() ? cfg.dataset : name) +
+                                 "' failed to load: " + e.what());
     }
-    raw.validate();
 
-    // Label encoding: single-output integer targets 0..K-1 are detected here
+    // Target stats from the SOURCE values (pre-encoding) so the UI can show
+    // exactly what is being predicted (column, distinct values, range).
+    int tgtDistinct = 0;
+    double tgtMin = 0.0, tgtMax = 0.0;
+    if (!raw.target(0).empty()) {
+        auto tvals = distinctTargets(raw);
+        tgtDistinct = (int)tvals.size();
+        tgtMin = tvals.front();
+        tgtMax = tvals.back();
+    }
+
+    // Label encoding: single-output integer targets 0..K-1 become one-hot
     // (multiclass CSV/Iris); {0,1} stays binary; anything else is regression.
-    // Detection happens BEFORE splitting so the split can be stratified by
-    // class; one-hot encoding is applied to each split afterwards.
+    // More than 32 distinct integer targets is ambiguous (classification with
+    // many classes vs. integer regression): proceed as regression with a note
+    // rather than guessing wrong silently.
     std::size_t classes = 0;
     bool discrete = false;
+    std::string encodeNote;
     if (raw.target(0).size() == 1) {
         auto vals = distinctTargets(raw);
         bool integral = true;
         for (double v : vals)
-            if (std::floor(v) != v || v < 0.0 || v > 64.0) { integral = false; break; }
+            if (std::floor(v) != v || v < 0.0 || v > 1000000.0) { integral = false; break; }
         if (integral && !vals.empty()) {
             int k = int(vals.back()) + 1;
             if ((std::size_t)k == vals.size() && k >= 2 && k <= 32) {
                 classes = std::size_t(k);
                 discrete = true;
+            } else if ((std::size_t)k == vals.size() && k > 32) {
+                std::ostringstream ns;
+                ns << "Note: target has " << k << " distinct integer values — treating as regression. "
+                   << "One-hot encode the labels for classification with many classes.";
+                encodeNote = ns.str();
             }
         }
     } else {
@@ -243,6 +203,12 @@ PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
     d.features = d.inDim;
     d.classes = classes;
     d.discreteClasses = discrete;
+    d.splitNote = encodeNote;
+    d.targetColUsed = srcCol;
+    d.targetNote = srcNote;
+    d.targetDistinct = (std::size_t)std::max(0, tgtDistinct);
+    d.targetMin = tgtMin;
+    d.targetMax = tgtMax;
 
     auto encodePart = [&](const Dataset& part) -> Dataset {
         if (discrete && classes > 2 && part.size() > 0 && part.target(0).size() == 1)
@@ -253,35 +219,62 @@ PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
     d.outDim = (discrete && classes > 2) ? classes : raw.target(0).size();
 
     if (raw.size() <= 8) {
-        // Tiny truth tables: a held-out split would leave a 1-sample test
-        // set (pure noise). Train and evaluate on the full table instead.
+        // Tiny truth tables: no held-out split exists (any split would leave
+        // 0- or 1-sample parts). Train on the full table; there is NO test
+        // set, so no test metric will be reported — only train metrics.
         d.tiny = true;
         Dataset enc = encodePart(raw);
-        NormStats st = fitNorm(enc, cfg.normMode);
-        d.train = normDataset(enc, st);
-        d.test = d.train;
+        auto normalizer = NormalizerFactory::create(cfg.normMode);
+        normalizer->fit(enc);
+        d.train = normalizer->normalize(enc);
         d.hasVal = false;
+        d.hasTest = false;
+        d.splitNote += (d.splitNote.empty() ? std::string() : std::string("\n")) +
+            "Tiny dataset: training on all " + std::to_string(d.samples) +
+            " samples; no held-out test set, so no test metric is reported.";
     } else if (discrete && classes >= 2 && raw.target(0).size() == 1) {
         // Classification data with integer labels: stratified split keeps
         // every class proportionally present in train/val/test. A pure
         // random split of 30 Iris rows into 24/3/3 routinely leaves whole
         // classes out of val/test, making those accuracies pure noise.
-        auto parts = stratifiedSplit(raw, int(classes), cfg.trainFrac, cfg.valFrac, cfg.seed);
+        auto parts = stratifiedSplit(raw, int(classes), cfg.trainFrac, cfg.valFrac, cfg.seed,
+                                     cfg.splitShuffle);
         Dataset tr = encodePart(std::get<0>(parts));
         Dataset va = encodePart(std::get<1>(parts));
         Dataset te = encodePart(std::get<2>(parts));
-        NormStats st = fitNorm(tr, cfg.normMode);
-        d.train = normDataset(tr, st);
-        d.val = normDataset(va, st);
-        d.test = normDataset(te, st);
+        auto normalizer = NormalizerFactory::create(cfg.normMode);
+        normalizer->fit(tr);
+        d.train = normalizer->normalize(tr);
+        d.val = normalizer->normalize(va);
+        d.test = normalizer->normalize(te);
         d.hasVal = true;
+        d.hasTest = true;
     } else {
-        auto parts = raw.splitTrainValTest(cfg.trainFrac, cfg.valFrac, cfg.seed);
-        NormStats st = fitNorm(std::get<0>(parts), cfg.normMode);
-        d.train = normDataset(std::get<0>(parts), st);
-        d.val = normDataset(std::get<1>(parts), st);
-        d.test = normDataset(std::get<2>(parts), st);
-        d.hasVal = true;
+        // Exact counts with a minimum of 1 sample per part (a zero val share
+        // disables validation), so sizes like 9 samples (7/1/1) or extreme
+        // ratios can never produce an empty split.
+        std::size_t reqVal = (cfg.valFrac <= 0.0) ? 0
+            : std::max<std::size_t>(1, std::size_t(double(raw.size()) * cfg.valFrac));
+        std::size_t wantTrain = std::size_t(double(raw.size()) * cfg.trainFrac);
+        std::size_t nVal = reqVal;
+        std::size_t nTest = (wantTrain + nVal < raw.size()) ? raw.size() - wantTrain - nVal : 1;
+        std::size_t nTrain = raw.size() - nVal - nTest;
+        if (nTrain < 1)
+            throw std::runtime_error("Dataset '" + name + "' is too small for a train/val/test split.");
+        if (nTrain != wantTrain || nVal != reqVal) {
+            std::ostringstream ns;
+            ns << "Note: split adjusted to " << nTrain << "/" << nVal << "/" << nTest
+               << " to guarantee non-empty train" << (reqVal > 0 ? "/val" : "") << "/test parts.";
+            d.splitNote += (d.splitNote.empty() ? std::string() : std::string("\n")) + ns.str();
+        }
+        auto parts = raw.splitCounts(nTrain, nVal, cfg.seed, cfg.splitShuffle);
+        auto normalizer = NormalizerFactory::create(cfg.normMode);
+        normalizer->fit(std::get<0>(parts));
+        d.train = normalizer->normalize(std::get<0>(parts));
+        d.val = normalizer->normalize(std::get<1>(parts));
+        d.test = normalizer->normalize(std::get<2>(parts));
+        d.hasVal = (nVal > 0);
+        d.hasTest = true;
     }
     d.nTrain = d.train.size();
     d.nVal = d.val.size();
@@ -294,63 +287,9 @@ PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
 
 bool ExperimentController::validate(const ExperimentConfig& cfg, const PreparedData& d,
                                     std::string& err, std::string& warn) {
-    err.clear();
-    warn.clear();
-    if (cfg.hidden.empty() || cfg.hidden.size() != cfg.hiddenActs.size()) {
-        err = "Need at least 1 hidden layer.";
-        return false;
-    }
-    for (std::size_t i = 0; i < cfg.hidden.size(); ++i) {
-        if (cfg.hidden[i] < 1 || cfg.hidden[i] > 1024) {
-            err = "Hidden layer " + std::to_string(i + 1) + ": neuron count must be 1..1024.";
-            return false;
-        }
-        try { ActivationFactory::create(cfg.hiddenActs[i]); }
-        catch (const std::exception&) {
-            err = "Unknown hidden activation '" + cfg.hiddenActs[i] + "'.";
-            return false;
-        }
-    }
-    try { ActivationFactory::create(cfg.outputAct); }
-    catch (const std::exception&) {
-        err = "Unknown output activation '" + cfg.outputAct + "'.";
-        return false;
-    }
-    try { LossFactory::create(cfg.loss); }
-    catch (const std::exception&) {
-        err = "Unknown loss '" + cfg.loss + "'.";
-        return false;
-    }
-    try { OptimizerFactory::create(cfg.optimizer, cfg.opt); }
-    catch (const std::exception& e) {
-        err = e.what();
-        return false;
-    }
-    if (cfg.epochs < 1 || cfg.epochs > 200000) {
-        err = "Epoch count must be 1..200000.";
-        return false;
-    }
-    if (cfg.loss == "bce" && d.outDim != 1) {
-        err = "BCE needs a 1-output network (use MSE/CCE).";
-        return false;
-    }
-    // Non-blocking advisories (§7): warn, don't block experimentation.
-    std::ostringstream w;
-    if (cfg.loss == "mse" && d.outDim > 1)
-        w << "Warning: MSE on a " << d.outDim << "-output task — CCE usually trains classifiers better.\n";
-    if (cfg.loss == "cce" && cfg.outputAct == "linear")
-        w << "Warning: Linear outputs are unbounded — CCE expects [0,1]; prefer Sigmoid output.\n";
-    if (cfg.loss == "bce" && cfg.outputAct != "sigmoid")
-        w << "Warning: BCE is designed for Sigmoid outputs.\n";
-    std::size_t eff = (cfg.batchSize == 0 || cfg.batchSize > d.nTrain) ? d.nTrain : cfg.batchSize;
-    if (cfg.batchSize > d.nTrain)
-        w << "Note: batch " << cfg.batchSize << " > train size " << d.nTrain
-          << " — effective batch " << eff << " (full-batch).\n";
-    if (d.tiny)
-        w << "Note: tiny dataset — training and testing on all " << d.samples << " samples.\n";
-    warn = w.str();
-    if (!warn.empty() && warn.back() == '\n') warn.pop_back();
-    return true;
+    // Delegated to the rule composite: one independently-testable object per
+    // check instead of a monolithic if-chain (same messages as before).
+    return ConfigValidator::defaults().validate(cfg, d, err, warn);
 }
 
 ExperimentResult ExperimentController::run(const ExperimentConfig& cfg, TrainingCallback* cb,
@@ -391,7 +330,10 @@ ExperimentResult ExperimentController::run(const ExperimentConfig& cfg, Training
         res.net = net;
         res.hasNet = true;
         res.hasVal = res.data.hasVal;
+        res.hasTest = res.data.hasTest;
         res.stopped = stop && stop->load();
+        if (!res.data.splitNote.empty())
+            res.warning += (res.warning.empty() ? "" : "\n") + res.data.splitNote;
 
         auto evalSet = [&](const Dataset& d, double& lossOut, double& accOut) {
             std::vector<Vector> p, t;
@@ -402,25 +344,30 @@ ExperimentResult ExperimentController::run(const ExperimentConfig& cfg, Training
             double s = 0.0;
             for (std::size_t i = 0; i < d.size(); ++i) s += loss->compute(p[i], t[i]);
             lossOut = d.size() ? s / double(d.size()) : 0.0;
-            accOut = Accuracy().evaluate(p, t);
+            accOut = p.empty() ? 0.0 : Accuracy().evaluate(p, t);
         };
         evalSet(res.data.train, res.trainLoss, res.trainAcc);
         if (res.hasVal) evalSet(res.data.val, res.valLoss, res.valAcc);
-        evalSet(res.data.test, res.testLoss, res.testAcc);
+        // The test set is evaluated ONCE, after training, and only when a
+        // genuine held-out set exists. Tiny truth tables have none: no test
+        // metric is reported for them, ever.
+        if (res.hasTest) evalSet(res.data.test, res.testLoss, res.testAcc);
         res.evaluated = true;
 
         if (res.data.discreteClasses && res.data.classes >= 2 && res.data.classes <= 32) {
             try {
+                const Dataset& cd = res.hasTest ? res.data.test : res.data.train;
                 std::vector<Vector> p, t;
-                for (std::size_t i = 0; i < res.data.test.size(); ++i) {
-                    p.push_back(net.predict(res.data.test.input(i)));
-                    t.push_back(res.data.test.target(i));
+                for (std::size_t i = 0; i < cd.size(); ++i) {
+                    p.push_back(net.predict(cd.input(i)));
+                    t.push_back(cd.target(i));
                 }
                 ConfusionMatrix cm(res.data.classes);
                 cm.evaluate(p, t);
                 res.confusion = cm.matrix();
                 res.numClasses = res.data.classes;
                 res.hasConfusion = true;
+                res.confusionOnTrain = !res.hasTest;
             } catch (const std::exception&) { /* confusion stays unavailable */ }
         }
     } catch (const std::exception& e) {

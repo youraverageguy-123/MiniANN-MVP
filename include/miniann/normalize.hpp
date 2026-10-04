@@ -27,6 +27,9 @@ public:
 
 class MaxAbsNormalization : public INormalizer {
 public:
+    // Per-feature max-abs: each feature is scaled by its own peak so
+    // small-magnitude features keep a usable signal instead of being
+    // squashed by the global maximum. Fit on TRAIN inputs only.
     void fit(const Dataset& train) override;
     Vector apply(const Vector& x) const override;
     std::string name() const override { return "maxabs"; }

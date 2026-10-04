@@ -13,10 +13,16 @@ Dataset INormalizer::normalize(const Dataset& d) const {
 }
 
 void MaxAbsNormalization::fit(const Dataset& train) {
-    double m = 0.0;
-    for (std::size_t i = 0; i < train.size(); ++i)
-        for (double v : train.input(i)) m = std::max(m, std::abs(v));
-    if (train.size() > 0) scale_.assign(train.input(0).size(), m == 0.0 ? 1.0 : m);
+    scale_.clear();
+    if (train.size() == 0) return;
+    scale_.assign(train.input(0).size(), 0.0);
+    for (std::size_t i = 0; i < train.size(); ++i) {
+        const Vector& x = train.input(i);
+        for (std::size_t j = 0; j < x.size() && j < scale_.size(); ++j)
+            scale_[j] = std::max(scale_[j], std::abs(x[j]));
+    }
+    for (auto& s : scale_)
+        if (s == 0.0) s = 1.0;
 }
 
 Vector MaxAbsNormalization::apply(const Vector& x) const {
