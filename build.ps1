@@ -38,12 +38,8 @@ $QTLIBS = @("-mwindows", "-LC:/msys64/ucrt64/lib", "-lQt6Widgets", "-lQt6Gui", "
 
 if (-not (Test-Path "obj")) { New-Item -ItemType Directory "obj" | Out-Null }
 
-$srcFiles = @(
-    "src/activation.cpp", "src/neuron.cpp", "src/layer.cpp", "src/network.cpp",
-    "src/loss.cpp", "src/optimizer.cpp", "src/trainer.cpp", "src/dataset.cpp",
-    "src/metrics.cpp", "src/logger.cpp", "src/serializer.cpp", "src/visualizer.cpp",
-    "src/experiment.cpp", "src/callbacks.cpp"
-)
+$srcFiles = Get-ChildItem "src/*.cpp" | ForEach-Object { "src/$($_.Name)" }
+
 
 # Incremental compilation check
 $toCompile = @()
@@ -89,6 +85,7 @@ function Build-Target($name, $srcPath) {
 }
 
 if ($Target -eq "gui" -or $Target -eq "all") {
+    Stop-Process -Name "gui_qt" -Force -ErrorAction SilentlyContinue
     Write-Host "[build] Building gui_qt.exe (Qt Widgets)..." -ForegroundColor Cyan
     & g++ $FLAGS $INCL $QTINC $LIB demos/gui_qt.cpp $QTLIBS -o gui_qt.exe
     if ($LASTEXITCODE -ne 0) {
@@ -114,6 +111,7 @@ if ($Target -eq "all" -or $Target -eq "tests") {
     Build-Target "test_training" "tests/test_training.cpp"
     Build-Target "test_correctness" "tests/test_correctness.cpp"
     Build-Target "test_callbacks" "tests/test_callbacks.cpp"
+    Build-Target "test_patterns" "tests/test_patterns.cpp"
 }
 
 Write-Host "`n====================================" -ForegroundColor Green
