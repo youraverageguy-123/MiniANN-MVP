@@ -42,6 +42,7 @@ struct ExperimentConfig {
     std::string loss = "mse";
     std::string optimizer = "adam";
     OptimizerConfig opt;
+    std::string lrScheduler = "Constant";
     int epochs = 1500;
     std::size_t batchSize = 1;   // 0 = full batch
 };

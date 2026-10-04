@@ -3,6 +3,7 @@
 #include "miniann/normalize.hpp"
 #include "miniann/serializer.hpp"
 #include "miniann/validate.hpp"
+#include "miniann/scheduler.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -318,7 +319,8 @@ ExperimentResult ExperimentController::run(const ExperimentConfig& cfg, Training
         tc.logEvery = 1;
 
         ControlCallback ctl{cb, stop};
-        Trainer trainer(net, *loss, *opt, nullptr);
+        auto scheduler = SchedulerFactory::create(cfg.lrScheduler);
+        Trainer trainer(net, *loss, *opt, nullptr, scheduler.get());
         res.history = trainer.fit(res.data.train,
                                   res.data.hasVal ? &res.data.val : nullptr, tc, &ctl);
         res.net = net;

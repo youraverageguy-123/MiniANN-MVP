@@ -1,4 +1,5 @@
 #include "miniann/trainer.hpp"
+#include "miniann/scheduler.hpp"
 #include <random>
 #include <algorithm>
 #include <numeric>
@@ -14,8 +15,10 @@ void TrainingConfig::validate() const {
         throw std::invalid_argument("TrainingConfig: logEvery must be >= 1");
 }
 
-Trainer::Trainer(NeuralNetwork& net, const ILoss& loss, IOptimizer& opt, ILogger* logger)
-    : net_(net), loss_(loss), opt_(opt), logger_(logger) {}
+Trainer::Trainer(NeuralNetwork& net, const ILoss& loss, IOptimizer& opt, ILogger* logger,
+                 ILearningRateScheduler* scheduler)
+    : net_(net), loss_(loss), opt_(opt), logger_(logger), scheduler_(scheduler),
+      baseLr_(opt.lr() > 0.0 ? opt.lr() : 0.01) {}
 
 TrainingHistory Trainer::fit(const Dataset& train, const Dataset* validation,
                              const TrainingConfig& cfg, TrainingCallback* cb) {
@@ -56,6 +59,10 @@ TrainingHistory Trainer::fit(const Dataset& train, const Dataset* validation,
     };
 
     for (int epoch = 1; epoch <= cfg.epochs; ++epoch) {
+        if (scheduler_) {
+            opt_.setLearningRate(scheduler_->getRate(baseLr_, epoch, cfg.epochs));
+        }
+
         // index order
         std::vector<std::size_t> idx(train.size());
         std::iota(idx.begin(), idx.end(), 0);

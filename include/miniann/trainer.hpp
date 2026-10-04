@@ -9,6 +9,8 @@
 
 namespace miniann {
 
+class ILearningRateScheduler;
+
 struct TrainingConfig {
     int epochs = 1000;
     std::size_t batchSize = 1; // 1 = online SGD, >1 = mini-batch, 0 = full batch
@@ -49,7 +51,7 @@ public:
 class Trainer {
 public:
     Trainer(NeuralNetwork& net, const ILoss& loss, IOptimizer& opt,
-            ILogger* logger = nullptr);
+            ILogger* logger = nullptr, ILearningRateScheduler* scheduler = nullptr);
     TrainingHistory fit(const Dataset& train, const Dataset* validation,
                         const TrainingConfig& cfg, TrainingCallback* cb = nullptr);
 private:
@@ -57,6 +59,8 @@ private:
     const ILoss& loss_;
     IOptimizer& opt_;
     ILogger* logger_;
+    ILearningRateScheduler* scheduler_ = nullptr;
+    double baseLr_ = 0.01;
 };
 
 } // namespace miniann

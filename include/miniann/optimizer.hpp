@@ -11,6 +11,8 @@ class IOptimizer {
 public:
     virtual ~IOptimizer() = default;
     virtual void step(NeuralNetwork& net, std::size_t batchSize) = 0;
+    virtual void setLearningRate(double lr) { (void)lr; }
+    virtual double lr() const { return 0.0; }
     virtual std::string name() const = 0; // runtime identity (viva: polymorphism)
 };
 
@@ -22,7 +24,8 @@ public:
     explicit SGD(double learningRate) : lr_(learningRate) {}
     void step(NeuralNetwork& net, std::size_t batchSize) override;
     void visit(std::size_t layer, std::size_t neuron, Neuron& n) override;
-    double lr() const { return lr_; }
+    void setLearningRate(double lr) override { lr_ = lr; }
+    double lr() const override { return lr_; }
     std::string name() const override { return "sgd"; }
 };
 
@@ -38,7 +41,8 @@ public:
     explicit Adam(double lr = 0.001, double b1 = 0.9, double b2 = 0.999, double eps = 1e-8);
     void step(NeuralNetwork& net, std::size_t batchSize) override;
     void visit(std::size_t layer, std::size_t neuron, Neuron& n) override;
-    double lr() const { return lr_; }
+    double lr() const override { return lr_; }
+    void setLearningRate(double lr) override { lr_ = lr; }
     double beta1() const { return beta1_; }
     double beta2() const { return beta2_; }
     double eps() const { return eps_; }
@@ -66,7 +70,8 @@ public:
     explicit Momentum(double lr = 0.01, double mu = 0.9);
     void step(NeuralNetwork& net, std::size_t batchSize) override;
     void visit(std::size_t layer, std::size_t neuron, Neuron& n) override;
-    double lr() const { return lr_; }
+    double lr() const override { return lr_; }
+    void setLearningRate(double lr) override { lr_ = lr; }
     double mu() const { return mu_; }
     struct State {
         std::vector<std::vector<Vector>> vW;

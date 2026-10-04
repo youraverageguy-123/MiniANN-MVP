@@ -13,6 +13,7 @@
 #include <QWidget>
 #include <QLabel>
 #include <QPushButton>
+#include <QLineEdit>
 #include <QSlider>
 #include <QSpinBox>
 #include <QComboBox>
@@ -53,11 +54,14 @@
 #include <QDesktopServices>
 #include <QList>
 #include <QPointer>
+#include <QProgressBar>
+#include <QKeyEvent>
 
 #include "miniann/experiment.hpp"
 #include "miniann/serializer.hpp"
 #include "miniann/report.hpp"
 #include "miniann/visualizer.hpp"
+#include "miniann/scheduler.hpp"
 
 #include <vector>
 #include <string>
@@ -1100,6 +1104,77 @@ private:
     bool m_expanded = true;
 };
 
+// ---------------------------------------------------------------- MetricCard
+class MetricCard : public QFrame {
+public:
+    QLabel* m_title;
+    QLabel* m_val;
+    QLabel* m_sub;
+
+    MetricCard(const QString& title, const QString& initVal, const char* fg = "#F1F5F9", QWidget* parent = nullptr)
+        : QFrame(parent) {
+        setObjectName(QStringLiteral("metricCard"));
+        setStyleSheet(QStringLiteral(
+            "QFrame#metricCard { background:#0A0E17; border:1px solid #1E293B; border-radius:0px; min-width:88px; padding:4px 10px; }"
+            "QFrame#metricCard:hover { border:1px solid #334155; }"
+        ));
+        auto* lay = new QVBoxLayout(this);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->setSpacing(1);
+
+        m_title = new QLabel(title);
+        m_title->setStyleSheet(QStringLiteral("color:#64748B; font-size:9px; font-weight:700; letter-spacing:0.8px;"));
+        lay->addWidget(m_title);
+
+        m_val = new QLabel(initVal);
+        m_val->setStyleSheet(QString::asprintf("color:%s; font-family:'Consolas','Segoe UI',monospace; font-size:13px; font-weight:800;", fg));
+        lay->addWidget(m_val);
+
+        m_sub = new QLabel;
+        m_sub->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:9px;"));
+        m_sub->setVisible(false);
+        lay->addWidget(m_sub);
+    }
+
+    void setCard(const QString& val, const QString& sub = QString(), const char* fg = nullptr) {
+        m_val->setText(val);
+        if (fg) m_val->setStyleSheet(QString::asprintf("color:%s; font-family:'Consolas','Segoe UI',monospace; font-size:13px; font-weight:800;", fg));
+        if (!sub.isEmpty()) {
+            m_sub->setText(sub);
+            m_sub->setVisible(true);
+        } else {
+            m_sub->setVisible(false);
+        }
+    }
+};
+
+// ---------------------------------------------------------------- SplitBarWidget
+class SplitBarWidget : public QWidget {
+public:
+    int m_tr = 80, m_va = 10, m_te = 10;
+    explicit SplitBarWidget(QWidget* parent = nullptr) : QWidget(parent) {
+        setFixedHeight(6);
+        setToolTip(QStringLiteral("Dataset Split Proportions: Blue = Train, Amber = Val, Emerald = Test"));
+    }
+    void setSplits(int tr, int va, int te) {
+        m_tr = tr; m_va = va; m_te = te;
+        update();
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        int total = m_tr + m_va + m_te;
+        if (total <= 0) total = 100;
+        int w = width();
+        int wTr = int(double(m_tr) / total * w);
+        int wVa = int(double(m_va) / total * w);
+        int wTe = std::max(0, w - wTr - wVa);
+        p.fillRect(0, 0, wTr, height(), QColor("#0284C7"));
+        p.fillRect(wTr, 0, wVa, height(), QColor("#F59E0B"));
+        p.fillRect(wTr + wVa, 0, wTe, height(), QColor("#10B981"));
+    }
+};
+
 class MainWindow : public QMainWindow {
 public:
     enum UiState { ST_IDLE, ST_READY, ST_TRAINING, ST_COMPLETED, ST_STOPPED, ST_ERROR };
@@ -1133,10 +1208,104 @@ public:
 
         m_timer = new QTimer(this);
         connect(m_timer, &QTimer::timeout, [this]() { refreshLiveUi(); });
+        m_toastTimer = new QTimer(this);
+        m_toastTimer->setSingleShot(true);
+        connect(m_toastTimer, &QTimer::timeout, [this]() {
+            if (m_toastLbl) m_toastLbl->setVisible(false);
+        });
+
         // --notimer freezes the 10 Hz refresh (debug isolation for paint issues).
         if (!QApplication::arguments().contains(QStringLiteral("--notimer")))
             m_timer->start(100);
         refreshLiveUi();
+    }
+
+    void showToast(const QString& msg, const QString& type = QStringLiteral("success")) {
+        if (!m_toastLbl) return;
+        const char* bg = (type == "success") ? "#064E3B" : (type == "warning") ? "#78350F" : "#0F172A";
+        const char* fg = (type == "success") ? "#34D399" : (type == "warning") ? "#FBBF24" : "#38BDF8";
+        const char* border = (type == "success") ? "#059669" : (type == "warning") ? "#D97706" : "#0284C7";
+        m_toastLbl->setStyleSheet(QString::asprintf(
+            "QLabel { background:%s; color:%s; border:1px solid %s; border-radius:0px; padding:6px 12px; font-size:11px; font-weight:bold; }",
+            bg, fg, border
+        ));
+        m_toastLbl->setText(msg);
+        m_toastLbl->setVisible(true);
+        if (m_toastTimer) m_toastTimer->start(3500);
+    }
+
+    void showShortcutsDialog() {
+        auto* dlg = new QDialog(this);
+        dlg->setWindowTitle(QStringLiteral("MiniANN - Keyboard Shortcuts"));
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        dlg->setMinimumWidth(380);
+        dlg->setStyleSheet(QStringLiteral("QDialog { background:#0A0E17; border:1px solid #1E293B; }"));
+        auto* lay = new QVBoxLayout(dlg);
+        lay->setContentsMargins(18, 18, 18, 18);
+        lay->setSpacing(12);
+
+        auto* title = new QLabel(QStringLiteral("KEYBOARD SHORTCUTS"));
+        title->setStyleSheet(QStringLiteral("color:#38BDF8; font-size:13px; font-weight:bold; letter-spacing:1px;"));
+        lay->addWidget(title);
+
+        auto addRow = [&](const QString& key, const QString& desc) {
+            auto* row = new QHBoxLayout;
+            auto* k = new QLabel(key);
+            k->setStyleSheet(QStringLiteral("background:#080C14; color:#F1F5F9; border:1px solid #1E293B; border-radius:0px; padding:3px 8px; font-family:'Consolas',monospace; font-weight:bold; font-size:11px;"));
+            auto* d = new QLabel(desc);
+            d->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:12px;"));
+            row->addWidget(k);
+            row->addSpacing(10);
+            row->addWidget(d, 1);
+            lay->addLayout(row);
+        };
+
+        addRow(QStringLiteral("Space"), QStringLiteral("Start / Stop Training"));
+        addRow(QStringLiteral("Ctrl + E"), QStringLiteral("Export Standalone HTML Report"));
+        addRow(QStringLiteral("Ctrl + S"), QStringLiteral("Save Trained Model"));
+        addRow(QStringLiteral("Ctrl + O"), QStringLiteral("Load Model File"));
+        addRow(QStringLiteral("F11"), QStringLiteral("Toggle Fullscreen"));
+        addRow(QStringLiteral("F1 / ?"), QStringLiteral("Open Keyboard Shortcuts Help"));
+
+        auto* closeBtn = new QPushButton(QStringLiteral("Close"));
+        closeBtn->setCursor(Qt::PointingHandCursor);
+        closeBtn->setStyleSheet(QStringLiteral("background:#0F1420; color:#F1F5F9; border:1px solid #1E293B; padding:6px 16px; font-weight:bold;"));
+        connect(closeBtn, &QPushButton::clicked, dlg, &QDialog::close);
+        lay->addWidget(closeBtn, 0, Qt::AlignRight);
+
+        dlg->show();
+    }
+
+    void keyPressEvent(QKeyEvent* e) override {
+        if (e->key() == Qt::Key_Space && !e->isAutoRepeat()) {
+            QWidget* f = focusWidget();
+            if (f && (f->inherits("QLineEdit") || f->inherits("QSpinBox") ||
+                      f->inherits("QDoubleSpinBox") || f->inherits("QAbstractSpinBox"))) {
+                // allow typing in inputs
+            } else {
+                onTrainClicked();
+                return;
+            }
+        } else if (e->modifiers() & Qt::ControlModifier) {
+            if (e->key() == Qt::Key_E) {
+                onExportReport();
+                return;
+            } else if (e->key() == Qt::Key_S) {
+                onSaveModel();
+                return;
+            } else if (e->key() == Qt::Key_O) {
+                onLoadModel();
+                return;
+            }
+        } else if (e->key() == Qt::Key_F1 || e->key() == Qt::Key_Question) {
+            showShortcutsDialog();
+            return;
+        } else if (e->key() == Qt::Key_F11) {
+            if (isFullScreen()) showNormal();
+            else showFullScreen();
+            return;
+        }
+        QMainWindow::keyPressEvent(e);
     }
 
     // Test hook for --dump: snapshots widget state researchers can't see.
@@ -1255,6 +1424,20 @@ private:
     std::string m_shownNetFp;
 
     // ---- widgets ----
+    MetricCard* m_cardEpoch = nullptr;
+    MetricCard* m_cardLoss = nullptr;
+    MetricCard* m_cardTrAcc = nullptr;
+    MetricCard* m_cardValAcc = nullptr;
+    MetricCard* m_cardTeAcc = nullptr;
+    SplitBarWidget* m_splitBar = nullptr;
+    QProgressBar* m_epochProgBar = nullptr;
+    QLabel* m_telemetryLbl = nullptr;
+    QLabel* m_toastLbl = nullptr;
+    QTimer* m_toastTimer = nullptr;
+    std::chrono::steady_clock::time_point m_trainStartTime;
+    QComboBox* m_schedulerCombo = nullptr;
+    double m_lastTrLoss = 0.0, m_lastTrAcc = 0.0;
+
     QLabel* m_epochLbl = nullptr;
     QLabel* m_trainLossLbl = nullptr;
     QLabel* m_trainAccLbl = nullptr;
@@ -1417,6 +1600,9 @@ private:
         c.opt.beta1 = m_beta1;
         c.opt.beta2 = m_beta2;
         c.opt.epsilon = m_eps;
+        if (m_schedulerCombo) {
+            c.lrScheduler = m_schedulerCombo->currentText().toStdString();
+        }
         c.epochs = m_epochsTarget;
         c.batchSize = kBatchVals[m_batchIdx];
         return c;
@@ -1478,39 +1664,48 @@ private:
         auto* top = new QFrame;
         top->setObjectName(QStringLiteral("topbar"));
         auto* topLay = new QHBoxLayout(top);
-        topLay->setContentsMargins(20, 10, 20, 10);
+        topLay->setContentsMargins(18, 8, 18, 8);
         topLay->setSpacing(10);
         auto* titleLbl = new QLabel(QStringLiteral("MiniANN MVP - Network Workbench"));
         QFont titleFont = titleLbl->font();
-        titleFont.setPointSize(14);
+        titleFont.setPointSize(13);
         titleFont.setBold(true);
         titleLbl->setFont(titleFont);
         titleLbl->setStyleSheet(QStringLiteral("color:#F8FAFC;"));
         topLay->addWidget(titleLbl);
+
+        auto* shortcutsBtn = new QPushButton(QStringLiteral("? Shortcuts"));
+        shortcutsBtn->setCursor(Qt::PointingHandCursor);
+        shortcutsBtn->setStyleSheet(QStringLiteral(
+            "QPushButton { background:#0A0E17; color:#94A3B8; border:1px solid #1E293B; border-radius:0px; font-size:11px; font-weight:600; padding:4px 8px; }"
+            "QPushButton:hover { background:#1E293B; color:#F1F5F9; border:1px solid #38BDF8; }"
+        ));
+        connect(shortcutsBtn, &QPushButton::clicked, [this]() { showShortcutsDialog(); });
+        topLay->addWidget(shortcutsBtn);
+
         topLay->addStretch(1);
-        m_epochLbl = new QLabel;
-        m_trainLossLbl = new QLabel;
-        m_trainAccLbl = new QLabel;
-        m_valAccLbl = new QLabel;
-        m_testAccLbl = new QLabel;
-        auto makeStatChip = [](QLabel* lbl, const char* fg) {
-            lbl->setStyleSheet(QString::asprintf(
-                "QLabel { background:#0A0E17; color:%s; border:1px solid #1E293B; border-radius:0px; padding:5px 11px; font-family:'Consolas','Segoe UI',monospace; font-size:11px; font-weight:bold; }",
-                fg));
-        };
-        makeStatChip(m_epochLbl, "#F1F5F9");
-        makeStatChip(m_trainLossLbl, "#FBBF24");
-        makeStatChip(m_trainAccLbl, "#38BDF8");
-        makeStatChip(m_valAccLbl, "#F59E0B");
-        makeStatChip(m_testAccLbl, "#34D399");
-        topLay->addWidget(m_epochLbl);
-        topLay->addWidget(m_trainLossLbl);
-        topLay->addWidget(m_trainAccLbl);
-        topLay->addWidget(m_valAccLbl);
-        topLay->addWidget(m_testAccLbl);
+
+        m_cardEpoch = new MetricCard(QStringLiteral("EPOCH"), QStringLiteral("0 / 1500"), "#F1F5F9");
+        m_cardLoss = new MetricCard(QStringLiteral("TRAIN LOSS"), QStringLiteral("—"), "#FBBF24");
+        m_cardTrAcc = new MetricCard(QStringLiteral("TRAIN ACC"), QStringLiteral("—"), "#38BDF8");
+        m_cardValAcc = new MetricCard(QStringLiteral("VAL ACC"), QStringLiteral("—"), "#F59E0B");
+        m_cardTeAcc = new MetricCard(QStringLiteral("TEST ACC"), QStringLiteral("—"), "#34D399");
+
+        m_epochLbl = m_cardEpoch->m_val;
+        m_trainLossLbl = m_cardLoss->m_val;
+        m_trainAccLbl = m_cardTrAcc->m_val;
+        m_valAccLbl = m_cardValAcc->m_val;
+        m_testAccLbl = m_cardTeAcc->m_val;
+
+        topLay->addWidget(m_cardEpoch);
+        topLay->addWidget(m_cardLoss);
+        topLay->addWidget(m_cardTrAcc);
+        topLay->addWidget(m_cardValAcc);
+        topLay->addWidget(m_cardTeAcc);
+
         m_badge = new QLabel(QStringLiteral("IDLE"));
         m_badge->setAlignment(Qt::AlignCenter);
-        m_badge->setFixedSize(96, 30);
+        m_badge->setFixedSize(100, 36);
         topLay->addWidget(m_badge);
 
         // ----- left config column -----
@@ -1650,6 +1845,10 @@ private:
         splitRow->addWidget(m_testPctLbl);
         splitRow->addStretch(1);
         s1->addLayout(splitRow);
+
+        m_splitBar = new SplitBarWidget;
+        m_splitBar->setSplits(m_trainPct, m_valPct, std::max(0, 100 - m_trainPct - m_valPct));
+        s1->addWidget(m_splitBar);
 
         // CSV options row
         m_csvRow = new QWidget;
@@ -1977,6 +2176,21 @@ private:
         });
         sCol->addWidget(m_seedSpin);
         paramGrid->addLayout(sCol, 1, 1);
+
+        // LR Schedule Strategy
+        auto* schCol = new QVBoxLayout;
+        schCol->setSpacing(4);
+        auto* schLbl = new QLabel(QStringLiteral("LR SCHEDULE"));
+        schLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        schCol->addWidget(schLbl);
+        m_schedulerCombo = new QComboBox;
+        m_schedulerCombo->addItems({QStringLiteral("Constant"), QStringLiteral("Step Decay"), QStringLiteral("Cosine Annealing")});
+        m_schedulerCombo->setCurrentIndex(0);
+        connect(m_schedulerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int) {
+            configChanged();
+        });
+        schCol->addWidget(m_schedulerCombo);
+        paramGrid->addLayout(schCol, 2, 0, 1, 2);
 
         trainCardLay->addLayout(paramGrid);
 
@@ -2312,6 +2526,26 @@ private:
         tabRow->addWidget(m_tabNet);
         tabRow->addStretch(1);
         rv->addLayout(tabRow);
+
+        m_toastLbl = new QLabel;
+        m_toastLbl->setVisible(false);
+        m_toastLbl->setWordWrap(true);
+        rv->addWidget(m_toastLbl);
+
+        m_epochProgBar = new QProgressBar;
+        m_epochProgBar->setRange(0, 100);
+        m_epochProgBar->setValue(0);
+        m_epochProgBar->setTextVisible(false);
+        m_epochProgBar->setFixedHeight(4);
+        m_epochProgBar->setStyleSheet(QStringLiteral(
+            "QProgressBar { background:#080C14; border:none; border-radius:0px; }"
+            "QProgressBar::chunk { background:qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284C7, stop:1 #38BDF8); border-radius:0px; }"
+        ));
+        rv->addWidget(m_epochProgBar);
+
+        m_telemetryLbl = new QLabel(QStringLiteral("Ready to train. Configure dataset and click START TRAINING."));
+        m_telemetryLbl->setStyleSheet(QStringLiteral("color:#64748B; font-size:11px; font-family:'Consolas','Segoe UI',monospace; font-weight:600; padding:2px 0px;"));
+        rv->addWidget(m_telemetryLbl);
         // Playback timeline (§9, §10): shared Network + Boundary epoch state.
         auto* playRow = new QHBoxLayout;
         playRow->setSpacing(6);
@@ -2649,6 +2883,10 @@ private:
             m_epochSpin->blockSignals(false);
         }
 
+        int testPct = std::max(0, 100 - m_trainPct - m_valPct);
+        if (m_testPctLbl) m_testPctLbl->setText(QString::asprintf("%d%% test", testPct));
+        if (m_splitBar) m_splitBar->setSplits(m_trainPct, m_valPct, testPct);
+
         // (Preview was already refreshed above; its fingerprint cache makes
         // a second call here a no-op, so don't pay for it twice.)
         if (!m_previewErr.empty()) {
@@ -2811,12 +3049,12 @@ private:
         if ((int)s == m_cBadge) return;
         m_cBadge = (int)s;
         switch (s) {
-        case ST_TRAINING:  m_badge->setText(QStringLiteral("TRAINING")); m_badge->setStyleSheet(badgeStyle("#14532D", "#22C55E")); break;
-        case ST_COMPLETED: m_badge->setText(QStringLiteral("COMPLETE")); m_badge->setStyleSheet(badgeStyle("#134E4A", "#2DD4BF")); break;
-        case ST_STOPPED:   m_badge->setText(QStringLiteral("STOPPED"));  m_badge->setStyleSheet(badgeStyle("#713F12", "#FBBF24")); break;
-        case ST_ERROR:     m_badge->setText(QStringLiteral("ERROR"));    m_badge->setStyleSheet(badgeStyle("#7F1D1D", "#F87171")); break;
-        case ST_READY:     m_badge->setText(QStringLiteral("READY"));    m_badge->setStyleSheet(badgeStyle("#1E3A8A", "#93C5FD")); break;
-        default:           m_badge->setText(QStringLiteral("IDLE"));     m_badge->setStyleSheet(badgeStyle("#27272A", "#C9CDD8")); break;
+        case ST_TRAINING:  m_badge->setText(QStringLiteral("● TRAINING")); m_badge->setStyleSheet(badgeStyle("#0C4A6E", "#38BDF8")); break;
+        case ST_COMPLETED: m_badge->setText(QStringLiteral("✓ COMPLETE")); m_badge->setStyleSheet(badgeStyle("#064E3B", "#34D399")); break;
+        case ST_STOPPED:   m_badge->setText(QStringLiteral("⏹ STOPPED"));  m_badge->setStyleSheet(badgeStyle("#78350F", "#FBBF24")); break;
+        case ST_ERROR:     m_badge->setText(QStringLiteral("⚠ ERROR"));    m_badge->setStyleSheet(badgeStyle("#7F1D1D", "#F87171")); break;
+        case ST_READY:     m_badge->setText(QStringLiteral("READY"));      m_badge->setStyleSheet(badgeStyle("#1E293B", "#94A3B8")); break;
+        default:           m_badge->setText(QStringLiteral("IDLE"));       m_badge->setStyleSheet(badgeStyle("#0F172A", "#64748B")); break;
         }
     }
 
@@ -2854,21 +3092,64 @@ private:
         const QString na = QStringLiteral("—");
         if (training) {
             setBadge(ST_TRAINING);
-            setOnce(m_epochLbl, m_cEpoch, QString::asprintf("Epoch: %d / %d", liveEpoch, m_epochsTarget));
-            setOnce(m_trainLossLbl, m_cLoss, trainLoss.empty() ? "Train Loss: —"
-                : QString::asprintf("Train Loss: %.4f", trainLoss.back()));
-            setOnce(m_trainAccLbl, m_cTrAcc, trainAcc.empty() ? "Train Acc: —"
-                : QString::asprintf("Train Acc: %.1f%%", trainAcc.back() * 100.0f));
-            setOnce(m_valAccLbl, m_cValAcc, valAcc.empty() ? "Val Acc: —"
-                : QString::asprintf("Val Acc: %.1f%%", valAcc.back() * 100.0f));
-            setOnce(m_testAccLbl, m_cTeAcc, QStringLiteral("Test Acc: —"));
+            setOnce(m_epochLbl, m_cEpoch, QString::asprintf("%d / %d", liveEpoch, m_epochsTarget));
             int pct = m_epochsTarget > 0 ? int(100.0f * liveEpoch / m_epochsTarget) : 0;
-            setOnce(m_progressLbl, m_cProg, QString::asprintf("progress: %d%%", pct));
+            if (m_cardEpoch) m_cardEpoch->setCard(QString::asprintf("%d / %d", liveEpoch, m_epochsTarget), QString::asprintf("%d%% completed", pct));
+
+            if (!trainLoss.empty()) {
+                double curL = trainLoss.back();
+                double diffL = curL - m_lastTrLoss;
+                QString sub = (diffL < 0) ? QStringLiteral("↓ improving") : QStringLiteral("↑ plateau");
+                const char* fg = (diffL < 0) ? "#34D399" : "#FBBF24";
+                if (m_cardLoss) m_cardLoss->setCard(QString::asprintf("%.4f", curL), sub, fg);
+                m_lastTrLoss = curL;
+            } else if (m_cardLoss) {
+                m_cardLoss->setCard(QStringLiteral("—"), QStringLiteral("calculating"));
+            }
+
+            if (!trainAcc.empty()) {
+                double curA = trainAcc.back() * 100.0;
+                QString sub = (curA >= m_lastTrAcc) ? QStringLiteral("↑ climbing") : QStringLiteral("—");
+                if (m_cardTrAcc) m_cardTrAcc->setCard(QString::asprintf("%.1f%%", curA), sub, "#38BDF8");
+                m_lastTrAcc = curA;
+            } else if (m_cardTrAcc) {
+                m_cardTrAcc->setCard(QStringLiteral("—"), QStringLiteral("evaluating"));
+            }
+
+            if (!valAcc.empty() && m_cardValAcc) {
+                m_cardValAcc->setCard(QString::asprintf("%.1f%%", valAcc.back() * 100.0), QStringLiteral("validation"), "#F59E0B");
+            } else if (m_cardValAcc) {
+                m_cardValAcc->setCard(QStringLiteral("—"), QStringLiteral("validation"));
+            }
+
+            if (m_cardTeAcc) m_cardTeAcc->setCard(QStringLiteral("—"), QStringLiteral("held-out"));
+
+            if (m_epochProgBar) {
+                m_epochProgBar->setRange(0, m_epochsTarget);
+                m_epochProgBar->setValue(liveEpoch);
+            }
+
+            auto now = std::chrono::steady_clock::now();
+            double elapsedSec = std::chrono::duration<double>(now - m_trainStartTime).count();
+            if (elapsedSec > 0.05 && liveEpoch > 0 && m_telemetryLbl) {
+                double epPerSec = double(liveEpoch) / elapsedSec;
+                std::size_t nTrain = m_preview.train.size();
+                double samplesPerSec = epPerSec * double(nTrain);
+                int remainingEp = std::max(0, m_epochsTarget - liveEpoch);
+                double etaSec = (epPerSec > 1e-4) ? (remainingEp / epPerSec) : 0.0;
+                int elMin = int(elapsedSec) / 60, elSec = int(elapsedSec) % 60;
+                int etaMin = int(etaSec) / 60, etaS = int(etaSec) % 60;
+                m_telemetryLbl->setText(QString::asprintf(
+                    "Running Epoch %d/%d (%d%%)  |  Speed: %.0f samples/s (%.1f ep/s)  |  Elapsed: %02d:%02d  |  ETA: %02d:%02d",
+                    liveEpoch, m_epochsTarget, pct, samplesPerSec, epPerSec, elMin, elSec, etaMin, etaS
+                ));
+            }
+
             setTrainBtn(QStringLiteral("STOP TRAINING"), "stopBtn", true);
             setCfgEnabled(false);
             setSumStyle(QStringLiteral("color:#FACC15;"));
             setOnce(m_summaryLbl, m_cSum, QStringLiteral("Training..."));
-            setOnce(m_summaryBar, m_cSumBar, QStringLiteral("Training..."));
+            setOnce(m_summaryBar, m_cSumBar, QStringLiteral("Training in progress..."));
         } else if (!lastError.empty()) {
             setBadge(ST_ERROR);
             freezeHeader(na);
@@ -2880,12 +3161,14 @@ private:
             setSaveEnabled(hasResult && completed);
         } else if (hasResult) {
             setBadge(stopped ? ST_STOPPED : ST_COMPLETED);
-            setOnce(m_epochLbl, m_cEpoch, QString::asprintf("Epoch: %d / %d", liveEpoch, m_epochsTarget));
-            setOnce(m_trainLossLbl, m_cLoss, QString::asprintf("Train Loss: %.4f", fTL));
-            setOnce(m_trainAccLbl, m_cTrAcc, QString::asprintf("Train Acc: %.1f%%", fTA * 100.0f));
-            setOnce(m_valAccLbl, m_cValAcc, fHasVal ? QString::asprintf("Val Acc: %.1f%%", fVA * 100.0f) : "Val Acc: —");
-            setOnce(m_testAccLbl, m_cTeAcc, fHasTest
-                ? QString::asprintf("Test Acc: %.1f%%", fTeA * 100.0f) : "Test Acc: —");
+            setOnce(m_epochLbl, m_cEpoch, QString::asprintf("%d / %d", liveEpoch, m_epochsTarget));
+            if (m_cardEpoch) m_cardEpoch->setCard(QString::asprintf("%d / %d", liveEpoch, m_epochsTarget), QStringLiteral("100% complete"));
+            if (m_cardLoss) m_cardLoss->setCard(QString::asprintf("%.4f", fTL), QStringLiteral("final loss"), "#34D399");
+            if (m_cardTrAcc) m_cardTrAcc->setCard(QString::asprintf("%.1f%%", fTA * 100.0f), QStringLiteral("final train acc"), "#38BDF8");
+            if (m_cardValAcc) m_cardValAcc->setCard(fHasVal ? QString::asprintf("%.1f%%", fVA * 100.0f) : na, fHasVal ? QStringLiteral("final val") : QStringLiteral("n/a"), "#F59E0B");
+            if (m_cardTeAcc) m_cardTeAcc->setCard(fHasTest ? QString::asprintf("%.1f%%", fTeA * 100.0f) : na, fHasTest ? QStringLiteral("final test") : QStringLiteral("n/a"), "#34D399");
+            if (m_epochProgBar) m_epochProgBar->setValue(m_epochsTarget);
+            if (m_telemetryLbl) m_telemetryLbl->setText(QString::fromStdString(liveSummary));
             setSumStyle(QStringLiteral("color:#FACC15;"));
             setOnce(m_summaryBar, m_cSumBar, QString::fromStdString(liveSummary));
             setOnce(m_summaryLbl, m_cSum, QString::fromStdString(liveSummary));
@@ -2972,11 +3255,18 @@ private:
     }
 
     void freezeHeader(const QString& na) {
-        setOnce(m_epochLbl, m_cEpoch, QString::asprintf("Epoch: 0 / %d", m_epochsTarget));
-        setOnce(m_trainLossLbl, m_cLoss, QStringLiteral("Train Loss: ") + na);
-        setOnce(m_trainAccLbl, m_cTrAcc, QStringLiteral("Train Acc: ") + na);
-        setOnce(m_valAccLbl, m_cValAcc, QStringLiteral("Val Acc: ") + na);
-        setOnce(m_testAccLbl, m_cTeAcc, QStringLiteral("Test Acc: ") + na);
+        setOnce(m_epochLbl, m_cEpoch, QString::asprintf("0 / %d", m_epochsTarget));
+        setOnce(m_trainLossLbl, m_cLoss, na);
+        setOnce(m_trainAccLbl, m_cTrAcc, na);
+        setOnce(m_valAccLbl, m_cValAcc, na);
+        setOnce(m_testAccLbl, m_cTeAcc, na);
+        if (m_cardEpoch) m_cardEpoch->setCard(QString::asprintf("0 / %d", m_epochsTarget), QStringLiteral("idle"));
+        if (m_cardLoss) m_cardLoss->setCard(na, QString(), "#FBBF24");
+        if (m_cardTrAcc) m_cardTrAcc->setCard(na, QString(), "#38BDF8");
+        if (m_cardValAcc) m_cardValAcc->setCard(na, QString(), "#F59E0B");
+        if (m_cardTeAcc) m_cardTeAcc->setCard(na, QString(), "#34D399");
+        if (m_epochProgBar) m_epochProgBar->setValue(0);
+        if (m_telemetryLbl) m_telemetryLbl->setText(QStringLiteral("Ready to train. Configure dataset and click START TRAINING."));
     }
 
     // ---- live visualization timeline (§9, §10) ----
@@ -3138,10 +3428,7 @@ private:
         }
         if (m_netOutLbl) m_netOutLbl->setText(outTxt);
         // --- weight deltas + activity (§11, §12) ---
-        double meanAbsUpd = 0;
-        std::size_t updN = 0;
         auto top = topWeightChanges((std::size_t)idx, 3);
-        for (const auto& d : top) { meanAbsUpd += d.absd; updN++; }
         // Mean over top is illustrative; full mean for the bar:
         double fullMean = 0;
         std::size_t fullN = 0;
@@ -3326,6 +3613,16 @@ private:
         m_seenSeq = g_bridge.runSeq;
         g_bridge.stopRequested = false;
         g_bridge.isTraining = true;
+        m_trainStartTime = std::chrono::steady_clock::now();
+        m_lastTrLoss = 1e9;
+        m_lastTrAcc = 0.0;
+        if (m_epochProgBar) {
+            m_epochProgBar->setRange(0, m_epochsTarget);
+            m_epochProgBar->setValue(0);
+        }
+        if (m_telemetryLbl) m_telemetryLbl->setText(QStringLiteral("Initializing training thread..."));
+        showToast(QStringLiteral("Training started — monitoring live telemetry..."), QStringLiteral("info"));
+
         if (g_trainThread && g_trainThread->joinable()) g_trainThread->join();
         g_trainThread = std::make_unique<std::thread>([cfg]() {
             ExperimentResult res = ExperimentController::run(cfg, &g_bridge, &g_bridge.stopRequested);
@@ -3674,6 +3971,7 @@ private:
             QFileInfo fi(QString::fromStdString(filename));
             QUrl fileUrl = QUrl::fromLocalFile(fi.absoluteFilePath());
             QDesktopServices::openUrl(fileUrl);
+            showToast(QStringLiteral("✓ HTML report generated and opened in browser!"), QStringLiteral("success"));
         } catch (const std::exception& e) {
             QMessageBox::warning(this, QStringLiteral("Export Report Error"),
                 QString::fromStdString(std::string("Could not generate report:\n") + e.what()));
@@ -3692,6 +3990,7 @@ private:
         if (path.isEmpty()) return;
         try {
             ModelSerializer::save(*net, path.toStdString());
+            showToast(QStringLiteral("✓ Model parameters saved successfully to disk!"), QStringLiteral("success"));
         } catch (const std::exception& e) {
             QMessageBox::warning(this, QStringLiteral("Save model"), QString::fromStdString(std::string("Could not save model:\n") + e.what()));
         }
@@ -3761,6 +4060,7 @@ private:
             m_shownNetFp = archSummary() + "|" + m_previewFp + "|loaded";
             std::lock_guard<std::mutex> lock(g_bridge.mtx);
             g_bridge.summary = "Model loaded (" + describeNet(net) + ") — pick a matching dataset, then train or inspect Network.";
+            showToast(QStringLiteral("✓ Model loaded successfully from file!"), QStringLiteral("success"));
         } catch (const std::exception& e) {
             QMessageBox::warning(this, QStringLiteral("Load model"),
                                  QString::fromStdString(std::string("Could not load model:\n") + e.what()));
@@ -3814,6 +4114,12 @@ private:
         m_normCombo->blockSignals(true);
         m_normCombo->setCurrentIndex(m_normMode);
         m_normCombo->blockSignals(false);
+        if (m_splitBar) {
+            m_splitBar->setSplits(m_trainPct, m_valPct, std::max(0, 100 - m_trainPct - m_valPct));
+        }
+        if (m_testPctLbl) {
+            m_testPctLbl->setText(QString::asprintf("%d%% test", std::max(0, 100 - m_trainPct - m_valPct)));
+        }
         m_muRow->setVisible(m_opt == OPT_MOMENTUM);
         m_adamRow->setVisible(m_opt == OPT_ADAM);
     }
@@ -3831,6 +4137,7 @@ private:
         m_shuffle = true;
         m_normMode = 1;
         pushUiFromState();
+        showToast(QStringLiteral("Loaded XOR Architecture Preset"), QStringLiteral("info"));
         if (refresh) configChanged();
     }
     void applyPresetIris() {
@@ -3849,6 +4156,7 @@ private:
         m_shuffle = true;
         m_normMode = 1;
         pushUiFromState();
+        showToast(QStringLiteral("Loaded Iris (4-6-3) Benchmark Preset"), QStringLiteral("info"));
         configChanged();
     }
     void applyPresetBinary() {
@@ -3864,6 +4172,7 @@ private:
         m_shuffle = true;
         m_normMode = 1;
         pushUiFromState();
+        showToast(QStringLiteral("Loaded Binary Classification Preset"), QStringLiteral("info"));
         configChanged();
     }
 

@@ -19,4 +19,5 @@
 #include "miniann/report.hpp"
 #include "miniann/cli.hpp"
 #include "miniann/preprocessing.hpp"
+#include "miniann/scheduler.hpp"
 #include "miniann/gui_contract.hpp"

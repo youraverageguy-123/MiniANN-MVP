@@ -9,6 +9,7 @@
 #include "miniann/normalize.hpp"
 #include "miniann/optimizer.hpp"
 #include "miniann/validate.hpp"
+#include "miniann/scheduler.hpp"
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -281,6 +282,24 @@ static void testVisitorTraversal() {
     std::cout << "PASS visitor-traversal\n";
 }
 
+static void testLRSchedulers() {
+    auto constSched = SchedulerFactory::create("constant");
+    assert(constSched->name() == "Constant");
+    assert(std::abs(constSched->getRate(0.1, 50, 100) - 0.1) < 1e-9);
+
+    auto stepSched = SchedulerFactory::create("step", 100, 0.5);
+    assert(stepSched->name() == "Step Decay");
+    assert(std::abs(stepSched->getRate(0.1, 50, 1000) - 0.1) < 1e-9);
+    assert(std::abs(stepSched->getRate(0.1, 150, 1000) - 0.05) < 1e-9);
+    assert(std::abs(stepSched->getRate(0.1, 250, 1000) - 0.025) < 1e-9);
+
+    auto cosSched = SchedulerFactory::create("cosine", 100, 0.5, 0.001);
+    assert(cosSched->name() == "Cosine Annealing");
+    assert(std::abs(cosSched->getRate(0.1, 0, 1000) - 0.1) < 1e-9);
+    assert(std::abs(cosSched->getRate(0.1, 1000, 1000) - 0.001) < 1e-9);
+    std::cout << "PASS lr-scheduler-strategy\n";
+}
+
 int main() {
     testNormalizers();
     testWeightInits();
@@ -289,6 +308,7 @@ int main() {
     testTargetSelectorChain();
     testSplitOrders();
     testVisitorTraversal();
+    testLRSchedulers();
     std::cout << "ALL PATTERN CHECKS PASS\n";
     return 0;
 }
