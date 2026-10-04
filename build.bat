@@ -26,8 +26,10 @@ set INCL=-Iinclude
 set FLAGS=-std=c++17 -O2 -Wall -Wextra -Wpedantic -static-libstdc++ -static-libgcc -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic
 REM Static runtime: exes never depend on PATH-ordered MinGW DLLs (a second Qt
 REM copy on PATH, e.g. MiKTeX, plus chained MinGW runtimes segfaulted fstream).
-set QTINC=-IC:/msys64/ucrt64/include/qt6 -IC:/msys64/ucrt64/include/qt6/QtWidgets -IC:/msys64/ucrt64/include/qt6/QtGui -IC:/msys64/ucrt64/include/qt6/QtCore -DQT_WIDGETS_LIB -DQT_GUI_LIB -DQT_CORE_LIB
-set QTLIBS=-mwindows -LC:/msys64/ucrt64/lib -lQt6Widgets -lQt6Gui -lQt6Core
+set QTINC=-IC:/msys64/ucrt64/include/qt6 -IC:/msys64/ucrt64/include/qt6/QtWidgets -IC:/msys64/ucrt64/include/qt6/QtGui -IC:/msys64/ucrt64/include/qt6/QtCore -IC:/msys64/ucrt64/include/qt6/QtOpenGLWidgets -IC:/msys64/ucrt64/include/qt6/QtOpenGL -DQT_WIDGETS_LIB -DQT_GUI_LIB -DQT_CORE_LIB
+set QTLIBS=-mwindows -LC:/msys64/ucrt64/lib -lQt6Widgets -lQt6Gui -lQt6Core -lQt6OpenGLWidgets -lQt6OpenGL -lopengl32
+REM Console Qt linkage (no -mwindows: keeps the console for test output).
+set QTCLIBS=-LC:/msys64/ucrt64/lib -lQt6Gui -lQt6Core -lopengl32
 
 if not exist obj mkdir obj
 
@@ -46,60 +48,67 @@ if /i "%1"=="clean" (
 if /i "%1"=="demos" goto build_demos
 if /i "%1"=="tests" goto build_tests
 
-echo [1/14] Building xor_demo.exe...
+echo [1/15] Building xor_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\xor_demo.cpp -o xor_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [2/14] Building and_or_demo.exe...
+echo [2/15] Building and_or_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\and_or_demo.cpp -o and_or_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [3/14] Building iris_demo.exe...
+echo [3/15] Building iris_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\iris_demo.cpp -o iris_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [4/14] Building compare_demo.exe...
+echo [4/15] Building compare_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\compare_demo.cpp -o compare_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [5/14] Building playground.exe...
+echo [5/15] Building playground.exe...
 g++ %FLAGS% %INCL% %LIB% demos\playground.cpp -o playground.exe
 if errorlevel 1 exit /b 1
 
-echo [6/14] Building gradient_check.exe...
+echo [6/15] Building gradient_check.exe...
 g++ %FLAGS% %INCL% %LIB% tests\gradient_check.cpp -o gradient_check.exe
 if errorlevel 1 exit /b 1
 
-echo [7/14] Building test_basic.exe...
+echo [7/15] Building test_basic.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_basic.cpp -o test_basic.exe
 if errorlevel 1 exit /b 1
 
-echo [8/14] Building test_choices.exe...
+echo [8/15] Building test_choices.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_choices.cpp -o test_choices.exe
 if errorlevel 1 exit /b 1
 
-echo [9/14] Building test_training.exe...
+echo [9/15] Building test_training.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_training.cpp -o test_training.exe
 if errorlevel 1 exit /b 1
 
-echo [10/14] Building test_correctness.exe...
+echo [10/15] Building test_correctness.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_correctness.cpp -o test_correctness.exe
 if errorlevel 1 exit /b 1
 
-echo [11/14] Building test_patterns.exe...
+echo [11/15] Building test_patterns.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_patterns.cpp -o test_patterns.exe
 if errorlevel 1 exit /b 1
 
-echo [12/14] Building test_callbacks.exe...
+echo [12/15] Building test_callbacks.exe...
 g++ %FLAGS% %INCL% %LIB% tests\test_callbacks.cpp -o test_callbacks.exe
 if errorlevel 1 exit /b 1
 
-echo [13/14] Building early_stop_demo.exe...
+echo [13/15] Building early_stop_demo.exe...
 g++ %FLAGS% %INCL% %LIB% demos\early_stop_demo.cpp -o early_stop_demo.exe
 if errorlevel 1 exit /b 1
 
-echo [14/14] Building gui_qt.exe (Qt Widgets)...
-g++ %FLAGS% %INCL% %QTINC% %LIB% demos\gui_qt.cpp %QTLIBS% -o gui_qt.exe
+echo [14/15] Building test_viz3d_math.exe (3D camera/layout math)...
+g++ %FLAGS% %INCL% %QTINC% %LIB% tests\test_viz3d_math.cpp %QTCLIBS% -o test_viz3d_math.exe
+if errorlevel 1 exit /b 1
+
+echo [15/15] Building gui_qt.exe (Qt Widgets + 3D viewer)...
+if not exist obj3d mkdir obj3d
+g++ %FLAGS% %INCL% %QTINC% -c demos\network3d\network3d_widget.cpp -o obj3d\network3d_widget.o
+if errorlevel 1 exit /b 1
+g++ %FLAGS% %INCL% %QTINC% %LIB% obj3d\network3d_widget.o demos\gui_qt.cpp %QTLIBS% -o gui_qt.exe
 if errorlevel 1 (
     echo [WARN] gui_qt.exe skipped - install Qt6, or close the running
     echo        gui_qt.exe window: a locked exe cannot be relinked.
@@ -109,8 +118,11 @@ if errorlevel 1 (
 goto done
 
 :build_gui
-echo [GUI] Building gui_qt.exe (Qt Widgets)...
-g++ %FLAGS% %INCL% %QTINC% %LIB% demos\gui_qt.cpp %QTLIBS% -o gui_qt.exe
+echo [GUI] Building gui_qt.exe (Qt Widgets + 3D viewer)...
+if not exist obj3d mkdir obj3d
+g++ %FLAGS% %INCL% %QTINC% -c demos\network3d\network3d_widget.cpp -o obj3d\network3d_widget.o
+if errorlevel 1 exit /b 1
+g++ %FLAGS% %INCL% %QTINC% %LIB% obj3d\network3d_widget.o demos\gui_qt.cpp %QTLIBS% -o gui_qt.exe
 if errorlevel 1 (
     echo [WARN] gui_qt.exe failed to build. Ensure window is closed and Qt6 is installed.
     exit /b 1
