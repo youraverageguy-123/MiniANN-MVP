@@ -31,10 +31,18 @@ struct TrainingHistory {
 // (console plots, GUIs) implement this; batch training is unaffected.
 // shouldStop() is polled each epoch so a UI STOP button can cancel a run;
 // the default (never stop) keeps all existing callbacks source-compatible.
+//
+// onEpochNet() is an optional live-visualization hook: the trainer calls it
+// right after onEpoch() with read-only access to the current network so the
+// UI can capture lightweight snapshots (weights/activations) at a controlled
+// visualization interval. Training continues at full speed; the callback
+// decides whether to copy (e.g. epoch % interval == 0). Default is a no-op,
+// so all existing callbacks stay source-compatible.
 class TrainingCallback {
 public:
     virtual ~TrainingCallback() = default;
     virtual void onEpoch(int epoch, const TrainingHistory& hist) = 0;
+    virtual void onEpochNet(int /*epoch*/, const NeuralNetwork& /*net*/) {}
     virtual bool shouldStop() const { return false; }
 };
 

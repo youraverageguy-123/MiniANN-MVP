@@ -113,12 +113,16 @@ WeightInit initForActivation(const std::string& act) {
 // replaced by that Strategy hierarchy with identical per-feature semantics.
 
 // Forwards epochs to the UI callback and exposes the stop flag to the trainer.
+// onEpochNet is forwarded too so live visualization snapshots see the net.
 struct ControlCallback : public TrainingCallback {
     TrainingCallback* ui = nullptr;
     const std::atomic<bool>* stop = nullptr;
     ControlCallback(TrainingCallback* u, const std::atomic<bool>* s) : ui(u), stop(s) {}
     void onEpoch(int epoch, const TrainingHistory& hist) override {
         if (ui) ui->onEpoch(epoch, hist);
+    }
+    void onEpochNet(int epoch, const NeuralNetwork& net) override {
+        if (ui) ui->onEpochNet(epoch, net);
     }
     bool shouldStop() const override {
         return stop && stop->load();
