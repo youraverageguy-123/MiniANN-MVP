@@ -118,13 +118,13 @@ struct LiveGuiBridge : public TrainingCallback {
     double lastTrainLoss = 0, lastTrainAcc = 0, lastValLoss = 0, lastValAcc = 0;
     double lastTestLoss = 0, lastTestAcc = 0, lastSeconds = 0;
     int lastEpochsRun = 0, lastEpochsTarget = 0;
-    bool lastHasVal = false, lastTiny = false;
-    std::string lastWarning, lastArch, lastOptDesc, lastDsDesc, lastLoss;
+    bool lastHasVal = false, lastHasTest = false, lastTiny = false;
+    std::string lastWarning, lastArch, lastOptDesc, lastDsDesc, lastLoss, lastSplitTxt;
     std::string lastBatchTxt;
     int lastSeed = 42;
     std::vector<std::vector<std::size_t>> lastConfusion;
     std::size_t lastNumClasses = 0;
-    bool lastHasConfusion = false;
+    bool lastHasConfusion = false, lastConfusionOnTrain = false;
     std::shared_ptr<NeuralNetwork> lastNet;
     Dataset lastTrain, lastTest;
     std::size_t lastInDim = 0, lastOutDim = 0;
@@ -959,6 +959,8 @@ private:
     int m_batchIdx = 0;
     int m_seed = 42;
     bool m_shuffle = true;
+    bool m_splitShuffle = true;
+    int m_trainPct = 80, m_valPct = 10;
     int m_normMode = 1;
     struct HiddenCfg { int n = 8; ActiveActivation act = ACT_RELU; };
     static constexpr int kMaxHidden = 8;
@@ -1008,6 +1010,9 @@ private:
     QComboBox* m_epsCombo = nullptr;
     QSpinBox* m_seedSpin = nullptr;
     QCheckBox* m_shuffleChk = nullptr;
+    QCheckBox* m_splitShuffleChk = nullptr;
+    QSpinBox* m_trainPctSpin = nullptr, *m_valPctSpin = nullptr;
+    QLabel* m_testPctLbl = nullptr;
     QComboBox* m_normCombo = nullptr;
     std::vector<QPushButton*> m_lossBtns;
     std::vector<QPushButton*> m_optBtns;
@@ -1028,20 +1033,30 @@ private:
     QPushButton* m_stepBtn = nullptr;
     QScrollArea* m_cfgScroll = nullptr;
 
-    static void checkOnly(const std::vector<QPushButton*>& v, int idx) {
-        for (int i = 0; i < (int)v.size(); ++i)
-            v[(std::size_t)i]->setChecked(i == idx);
-    }
-
-    static void setExclusive(const std::vector<QPushButton*>& v) {
-        for (QPushButton* b : v) {
+    // Exclusive checkable-button group: radio-button behavior for QPushButtons
+    // without QButtonGroup's signal/slot machinery (no Q_OBJECT needed here).
+    // Shared state keeps the click lambdas safe; groups are held as members
+    // so the UI can re-sync checked states after presets/model loads.
+    class ExclusiveButtonGroup {
+    public:
+        void addButton(QPushButton* b) {
             b->setCheckable(true);
-            QObject::connect(b, &QPushButton::clicked, [v, b]() {
-                for (QPushButton* o : v) o->setChecked(o == b);
+            auto st = state_;
+            QObject::connect(b, &QPushButton::clicked, [st, b]() {
+                for (QPushButton* o : st->buttons) o->setChecked(o == b);
             });
+            st->buttons.push_back(b);
+            if (st->buttons.size() == 1) b->setChecked(true);
         }
-        if (!v.empty()) v.front()->setChecked(true);
-    }
+        void checkOnly(int idx) const {
+            for (int i = 0; i < (int)state_->buttons.size(); ++i)
+                state_->buttons[(std::size_t)i]->setChecked(i == idx);
+        }
+    private:
+        struct State { std::vector<QPushButton*> buttons; };
+        std::shared_ptr<State> state_ = std::make_shared<State>();
+    };
+    ExclusiveButtonGroup m_dsGroup, m_lossGroup, m_optGroup, m_tabGroup;
 
     QWidget* makeSection(const QString& text) {
         auto* w = new QWidget;
@@ -1089,6 +1104,9 @@ private:
         c.normMode = m_normMode;
         c.seed = (unsigned)m_seed;
         c.shuffle = m_shuffle;
+        c.splitShuffle = m_splitShuffle;
+        c.trainFrac = m_trainPct / 100.0;
+        c.valFrac = m_valPct / 100.0;
         for (int i = 0; i < (int)m_hidden.size(); ++i) {
             c.hidden.push_back(m_hidden[(std::size_t)i].n);
             c.hiddenActs.push_back(actToName(m_hidden[(std::size_t)i].act));
@@ -1108,7 +1126,9 @@ private:
 
     std::string fingerprint() const {
         return kDsKeys[(int)m_dataset] + std::string("|") + m_csvPath + "|" +
-               std::to_string(m_targetCol->value()) + "|" + (m_headerChk->isChecked() ? "h" : "n");
+               std::to_string(m_targetCol->value()) + "|" + (m_headerChk->isChecked() ? "h" : "n") + "|" +
+               std::to_string(m_trainPct) + "|" + std::to_string(m_valPct) + "|" +
+               (m_splitShuffle ? "s" : "n") + std::to_string(m_normMode);
     }
 
     void refreshPreview() {
@@ -1270,7 +1290,7 @@ private:
             dsWellLay->addWidget(b);
             m_dsBtns.push_back(b);
         }
-        setExclusive(m_dsBtns);
+        for (QPushButton* b : m_dsBtns) m_dsGroup.addButton(b);
         for (int i = 0; i < 5; ++i) {
             connect(m_dsBtns[(std::size_t)i], &QPushButton::clicked, [this, i]() {
                 m_dataset = ActiveDataset(i);
@@ -1292,6 +1312,46 @@ private:
         m_dsInfoLbl->setWordWrap(true);
         dsInfoLay->addWidget(m_dsInfoLbl);
         s1->addWidget(dsInfoPanel);
+
+        // Dataset split (§8 of the split spec): test share is automatic.
+        auto* splitRow = new QHBoxLayout;
+        splitRow->setSpacing(6);
+        auto* splitLbl = new QLabel(QStringLiteral("SPLIT"));
+        splitLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        splitRow->addWidget(splitLbl);
+        m_trainPctSpin = new QSpinBox;
+        m_trainPctSpin->setRange(1, 98);
+        m_trainPctSpin->setValue(80);
+        m_trainPctSpin->setFixedWidth(64);
+        m_trainPctSpin->setSuffix(QStringLiteral("%"));
+        m_trainPctSpin->setToolTip(QStringLiteral("Training share of the dataset"));
+        connect(m_trainPctSpin, &QSpinBox::valueChanged, [this](int v) {
+            m_trainPct = v;
+            configChanged();
+        });
+        splitRow->addWidget(m_trainPctSpin);
+        auto* trainPctLbl = new QLabel(QStringLiteral("train"));
+        trainPctLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        splitRow->addWidget(trainPctLbl);
+        m_valPctSpin = new QSpinBox;
+        m_valPctSpin->setRange(0, 98);
+        m_valPctSpin->setValue(10);
+        m_valPctSpin->setFixedWidth(64);
+        m_valPctSpin->setSuffix(QStringLiteral("%"));
+        m_valPctSpin->setToolTip(QStringLiteral("Validation share of the dataset"));
+        connect(m_valPctSpin, &QSpinBox::valueChanged, [this](int v) {
+            m_valPct = v;
+            configChanged();
+        });
+        splitRow->addWidget(m_valPctSpin);
+        auto* valPctLbl = new QLabel(QStringLiteral("val"));
+        valPctLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
+        splitRow->addWidget(valPctLbl);
+        m_testPctLbl = new QLabel;
+        m_testPctLbl->setStyleSheet(QStringLiteral("color:#8A90A0;"));
+        splitRow->addWidget(m_testPctLbl);
+        splitRow->addStretch(1);
+        s1->addLayout(splitRow);
 
         // CSV options row
         m_csvRow = new QWidget;
@@ -1592,9 +1652,10 @@ private:
 
         trainCardLay->addLayout(paramGrid);
 
-        // Shuffle checkbox row
+        // Shuffle checkboxes: epoch shuffling vs split shuffling are
+        // independent settings (split order affects reproducibility too).
         auto* shufRow = new QHBoxLayout;
-        m_shuffleChk = new QCheckBox(QStringLiteral("Shuffle dataset samples every epoch"));
+        m_shuffleChk = new QCheckBox(QStringLiteral("Shuffle samples every epoch"));
         m_shuffleChk->setChecked(true);
         m_shuffleChk->setStyleSheet(QStringLiteral("color:#C9CDD8; font-size:11px;"));
         connect(m_shuffleChk, &QCheckBox::toggled, [this](bool b) {
@@ -1602,6 +1663,15 @@ private:
             configChanged();
         });
         shufRow->addWidget(m_shuffleChk);
+        m_splitShuffleChk = new QCheckBox(QStringLiteral("Shuffle before split"));
+        m_splitShuffleChk->setChecked(true);
+        m_splitShuffleChk->setStyleSheet(QStringLiteral("color:#C9CDD8; font-size:11px;"));
+        m_splitShuffleChk->setToolTip(QStringLiteral("Shuffle before the train/val/test split (seeded)"));
+        connect(m_splitShuffleChk, &QCheckBox::toggled, [this](bool b) {
+            m_splitShuffle = b;
+            configChanged();
+        });
+        shufRow->addWidget(m_splitShuffleChk);
         shufRow->addStretch(1);
         trainCardLay->addLayout(shufRow);
 
@@ -1642,7 +1712,7 @@ private:
             lossWellLay->addWidget(b);
             m_lossBtns.push_back(b);
         }
-        setExclusive(m_lossBtns);
+        for (QPushButton* b : m_lossBtns) m_lossGroup.addButton(b);
         for (int i = 0; i < 3; ++i) {
             connect(m_lossBtns[(std::size_t)i], &QPushButton::clicked, [this, i]() {
                 m_loss = ActiveLoss(i);
@@ -1674,7 +1744,7 @@ private:
             optWellLay->addWidget(b);
             m_optBtns.push_back(b);
         }
-        setExclusive(m_optBtns);
+        for (QPushButton* b : m_optBtns) m_optGroup.addButton(b);
         for (int i = 0; i < 3; ++i) {
             connect(m_optBtns[(std::size_t)i], &QPushButton::clicked, [this, i]() {
                 m_opt = ActiveOptimizer(i);
@@ -1824,50 +1894,7 @@ private:
             g_bridge.stopRequested = false;
             g_trainThread = std::make_unique<std::thread>([cfg]() {
                 ExperimentResult res = ExperimentController::run(cfg, &g_bridge, &g_bridge.stopRequested);
-                std::lock_guard<std::mutex> lock(g_bridge.mtx);
-                if (!res.error.empty()) {
-                    g_bridge.lastError = std::string("Error: ") + res.error;
-                } else {
-                    char buf[256];
-                    std::snprintf(buf, sizeof(buf),
-                                  "Train loss %.4f | Train acc %.1f%% | Test acc %.1f%% (%.2fs)%s",
-                                  res.trainLoss, res.trainAcc * 100.0, res.testAcc * 100.0,
-                                  res.seconds, res.stopped ? " — stopped" : "");
-                    g_bridge.summary = buf;
-                    g_bridge.hasResult = true;
-                    g_bridge.lastCompleted = !res.stopped;
-                    g_bridge.lastStopped = res.stopped;
-                    g_bridge.lastTrainLoss = res.trainLoss;
-                    g_bridge.lastTrainAcc = res.trainAcc;
-                    g_bridge.lastValLoss = res.valLoss;
-                    g_bridge.lastValAcc = res.valAcc;
-                    g_bridge.lastTestLoss = res.testLoss;
-                    g_bridge.lastTestAcc = res.testAcc;
-                    g_bridge.lastHasVal = res.hasVal;
-                    g_bridge.lastWarning = res.warning;
-                    g_bridge.lastConfusion = res.confusion;
-                    g_bridge.lastNumClasses = res.numClasses;
-                    g_bridge.lastHasConfusion = res.hasConfusion;
-                    g_bridge.lastArch = describeNet(res.net);
-                    g_bridge.lastOptDesc = cfg.optimizer + " lr=" + std::to_string(cfg.opt.learningRate);
-                    std::size_t effB = (cfg.batchSize == 0 || cfg.batchSize > res.data.nTrain)
-                        ? res.data.nTrain : cfg.batchSize;
-                    g_bridge.lastBatchTxt = (cfg.batchSize == 0 ? std::string("full")
-                        : std::to_string(cfg.batchSize)) + " (eff " + std::to_string(effB) + ")";
-                    g_bridge.lastSeed = (int)cfg.seed;
-                    g_bridge.lastDsDesc = res.data.name + " " + std::to_string(res.data.samples) + " samples";
-                    g_bridge.lastLoss = cfg.loss;
-                    if (res.hasNet) {
-                        g_bridge.lastNet = std::make_shared<NeuralNetwork>(res.net);
-                        g_bridge.lastTrain = res.data.train;
-                        g_bridge.lastTest = res.data.test;
-                        g_bridge.lastInDim = res.data.inDim;
-                        g_bridge.lastOutDim = res.data.outDim;
-                        g_bridge.lastEpochsRun = (int)res.history.trainLoss.size();
-                        g_bridge.lastEpochsTarget = cfg.epochs;
-                        g_bridge.lastTiny = res.data.tiny;
-                    }
-                }
+                finalizeRun(cfg, res);
                 g_bridge.isTraining = false;
             });
         });
@@ -1898,8 +1925,11 @@ private:
         m_tabAcc = makeBtn(QStringLiteral("Accuracy (%)"), 140);
         m_tabBnd = makeBtn(QStringLiteral("Boundary"), 110);
         m_tabNet = makeBtn(QStringLiteral("Network"), 110);
-        setExclusive({m_tabLoss, m_tabAcc, m_tabBnd, m_tabNet});
-        m_tabLoss->setChecked(true);
+        m_tabGroup.addButton(m_tabLoss);
+        m_tabGroup.addButton(m_tabAcc);
+        m_tabGroup.addButton(m_tabBnd);
+        m_tabGroup.addButton(m_tabNet);
+        m_tabGroup.checkOnly(0);
         connect(m_tabLoss, &QPushButton::clicked, [this]() { m_view = VIEW_LOSS; syncTabs(); });
         connect(m_tabAcc, &QPushButton::clicked, [this]() { m_view = VIEW_ACC; syncTabs(); });
         connect(m_tabBnd, &QPushButton::clicked, [this]() { m_view = VIEW_BOUNDARY; syncTabs(); });
@@ -2142,9 +2172,9 @@ private:
     // Never throws into Qt: any unexpected failure becomes an error label
     // (an exception escaping a slot would terminate the whole app).
     void refreshConfigUi() try {
-        checkOnly(m_dsBtns, (int)m_dataset);
-        checkOnly(m_lossBtns, (int)m_loss);
-        checkOnly(m_optBtns, (int)m_opt);
+        m_dsGroup.checkOnly((int)m_dataset);
+        m_lossGroup.checkOnly((int)m_loss);
+        m_optGroup.checkOnly((int)m_opt);
         // Preview FIRST: arch summary + info panel below consume it.
         refreshPreview();
         m_muRow->setVisible(m_opt == OPT_MOMENTUM);
@@ -2193,13 +2223,31 @@ private:
                                                      (unsigned long long)d.features)
                 + (d.discreteClasses ? QString::number((unsigned long long)d.classes) : QStringLiteral("—"))
                 + QStringLiteral("\n");
+            {
+                QString tstat;
+                if (d.targetDistinct <= 32)
+                    tstat = QString::asprintf("%llu distinct values [%g..%g]",
+                        (unsigned long long)d.targetDistinct, d.targetMin, d.targetMax);
+                else
+                    tstat = QString::asprintf("many distinct values [%g..%g]",
+                        d.targetMin, d.targetMax);
+                info += QString::asprintf("Target: col %d — ", d.targetColUsed) + tstat;
+                if (!d.targetNote.empty())
+                    info += QStringLiteral(" (") + QString::fromStdString(d.targetNote) + QStringLiteral(")");
+                info += QStringLiteral("\n");
+            }
             if (d.tiny)
-                info += QString::asprintf("Train: %llu | Val: — | Test: %llu (full table: tiny dataset)\n",
-                                          (unsigned long long)d.nTrain, (unsigned long long)d.nTest);
-            else
-                info += QString::asprintf("Train: %llu | Val: %llu | Test: %llu (split 80/10/10)\n",
-                                          (unsigned long long)d.nTrain, (unsigned long long)d.nVal,
-                                          (unsigned long long)d.nTest);
+                info += QString::asprintf("Train: %llu | Val: — | Test: — (full table: tiny dataset, no held-out test)\n",
+                                          (unsigned long long)d.nTrain);
+            else {
+                std::size_t tot = d.nTrain + d.nVal + d.nTest;
+                int tp = tot ? (int)(100.0 * d.nTrain / tot) : 0;
+                int vp = tot ? (int)(100.0 * d.nVal / tot) : 0;
+                info += QString::asprintf("Train: %llu (%d%%) | Val: %llu (%d%%) | Test: %llu (%d%%)\n",
+                                          (unsigned long long)d.nTrain, tp,
+                                          (unsigned long long)d.nVal, vp,
+                                          (unsigned long long)d.nTest, 100 - tp - vp);
+            }
             info += QString::asprintf("Input dim: %llu | Output dim: %llu",
                                       (unsigned long long)d.inDim, (unsigned long long)d.outDim);
             m_dsInfoLbl->setText(info);
@@ -2226,8 +2274,9 @@ private:
                 : QString::number((unsigned long long)kBatchVals[m_batchIdx]);
             m_cfgLbl->setText(QString::fromLatin1(kOptKeys[(int)m_opt]) + QString::asprintf(" | lr %g | ep %d | ", m_lr, m_epochsTarget)
                 + QStringLiteral("batch ") + batchTxt
-                + QString::asprintf(" (eff %llu) | seed %d%s | %s", (unsigned long long)eff, m_seed,
-                                    m_shuffle ? "" : " noshuffle", normN));
+                + QString::asprintf(" (eff %llu) | seed %d%s%s | %s", (unsigned long long)eff, m_seed,
+                                    m_splitShuffle ? "" : " nosplit-shuffle",
+                                    m_shuffle ? "" : " noepoch-shuffle", normN));
         }
         refreshNetPreview();
         refreshLiveUi();
@@ -2244,7 +2293,7 @@ private:
     }
 
     void syncTabs() {
-        checkOnly({m_tabLoss, m_tabAcc, m_tabBnd, m_tabNet}, (int)m_view);
+        m_tabGroup.checkOnly((int)m_view);
         m_plot->setVisible(m_view == VIEW_LOSS || m_view == VIEW_ACC);
         m_boundary->setVisible(m_view == VIEW_BOUNDARY);
         m_netview->setVisible(m_view == VIEW_NETWORK);
@@ -2334,7 +2383,7 @@ private:
         bool hasResult = false, completed = false, stopped = false;
         std::string lastError;
         double fTL = 0, fTA = 0, fVA = 0, fTeA = 0;
-        bool fHasVal = false;
+        bool fHasVal = false, fHasTest = false;
         unsigned seq = 0;
         {
             std::lock_guard<std::mutex> lock(g_bridge.mtx);
@@ -2352,6 +2401,7 @@ private:
             fVA = g_bridge.lastValAcc;
             fTeA = g_bridge.lastTestAcc;
             fHasVal = g_bridge.lastHasVal;
+            fHasTest = g_bridge.lastHasTest;
             seq = g_bridge.runSeq;
         }
 
@@ -2388,7 +2438,8 @@ private:
             setOnce(m_trainLossLbl, m_cLoss, QString::asprintf("Train Loss: %.4f", fTL));
             setOnce(m_trainAccLbl, m_cTrAcc, QString::asprintf("Train Acc: %.1f%%", fTA * 100.0f));
             setOnce(m_valAccLbl, m_cValAcc, fHasVal ? QString::asprintf("Val Acc: %.1f%%", fVA * 100.0f) : "Val Acc: —");
-            setOnce(m_testAccLbl, m_cTeAcc, QString::asprintf("Test Acc: %.1f%%", fTeA * 100.0f));
+            setOnce(m_testAccLbl, m_cTeAcc, fHasTest
+                ? QString::asprintf("Test Acc: %.1f%%", fTeA * 100.0f) : "Test Acc: —");
             setSumStyle(QStringLiteral("color:#FACC15;"));
             setOnce(m_summaryBar, m_cSumBar, QString::fromStdString(liveSummary));
             setOnce(m_summaryLbl, m_cSum, QString::fromStdString(liveSummary));
@@ -2459,53 +2510,82 @@ private:
         if (g_trainThread && g_trainThread->joinable()) g_trainThread->join();
         g_trainThread = std::make_unique<std::thread>([cfg]() {
             ExperimentResult res = ExperimentController::run(cfg, &g_bridge, &g_bridge.stopRequested);
-            std::lock_guard<std::mutex> lock(g_bridge.mtx);
-            if (!res.error.empty()) {
-                g_bridge.lastError = std::string("Error: ") + res.error;
-            } else {
-                char buf[256];
-                std::snprintf(buf, sizeof(buf),
-                              "Train loss %.4f | Train acc %.1f%% | Test acc %.1f%% (%.2fs)%s",
-                              res.trainLoss, res.trainAcc * 100.0, res.testAcc * 100.0,
-                              res.seconds, res.stopped ? " — stopped" : "");
-                g_bridge.summary = buf;
-                g_bridge.hasResult = true;
-                g_bridge.lastCompleted = !res.stopped;
-                g_bridge.lastStopped = res.stopped;
-                g_bridge.lastTrainLoss = res.trainLoss;
-                g_bridge.lastTrainAcc = res.trainAcc;
-                g_bridge.lastValLoss = res.valLoss;
-                g_bridge.lastValAcc = res.valAcc;
-                g_bridge.lastTestLoss = res.testLoss;
-                g_bridge.lastTestAcc = res.testAcc;
-                g_bridge.lastHasVal = res.hasVal;
-                g_bridge.lastWarning = res.warning;
-                g_bridge.lastConfusion = res.confusion;
-                g_bridge.lastNumClasses = res.numClasses;
-                g_bridge.lastHasConfusion = res.hasConfusion;
-                g_bridge.lastArch = describeNet(res.net);
-                g_bridge.lastOptDesc = cfg.optimizer + " lr=" + std::to_string(cfg.opt.learningRate);
-                std::size_t effB = (cfg.batchSize == 0 || cfg.batchSize > res.data.nTrain)
-                    ? res.data.nTrain : cfg.batchSize;
-                g_bridge.lastBatchTxt = (cfg.batchSize == 0 ? std::string("full")
-                    : std::to_string(cfg.batchSize)) + " (eff " + std::to_string(effB) + ")";
-                g_bridge.lastSeed = (int)cfg.seed;
-                g_bridge.lastDsDesc = res.data.name + " " + std::to_string(res.data.samples) + " samples";
-                g_bridge.lastLoss = cfg.loss;
-                if (res.hasNet) {
-                    g_bridge.lastNet = std::make_shared<NeuralNetwork>(res.net);
-                    g_bridge.lastTrain = res.data.train;
-                    g_bridge.lastTest = res.data.test;
-                    g_bridge.lastInDim = res.data.inDim;
-                    g_bridge.lastOutDim = res.data.outDim;
-                    g_bridge.lastEpochsRun = (int)res.history.trainLoss.size();
-                    g_bridge.lastEpochsTarget = cfg.epochs;
-                    g_bridge.lastTiny = res.data.tiny;
-                }
-                g_bridge.runSeq++;
-            }
+            finalizeRun(cfg, res);
             g_bridge.isTraining = false;
         });
+    }
+
+    // Single choke point for post-run bookkeeping, shared by the START and
+    // STEP training paths (previously copy-pasted in both worker lambdas).
+    static void finalizeRun(const ExperimentConfig& cfg, ExperimentResult& res) {
+        std::lock_guard<std::mutex> lock(g_bridge.mtx);
+        if (!res.error.empty()) {
+            g_bridge.lastError = std::string("Error: ") + res.error;
+            return;
+        }
+        if (res.hasTest) {
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "Train loss %.4f | Train acc %.1f%% | Test acc %.1f%% (%.2fs)%s",
+                          res.trainLoss, res.trainAcc * 100.0, res.testAcc * 100.0,
+                          res.seconds, res.stopped ? " — stopped" : "");
+            g_bridge.summary = buf;
+        } else {
+            // No held-out test set exists: report train metrics only, never
+            // relabel them as test metrics.
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                          "Train loss %.4f | Train acc %.1f%% (%.2fs)%s — no held-out test set",
+                          res.trainLoss, res.trainAcc * 100.0,
+                          res.seconds, res.stopped ? ", stopped" : "");
+            g_bridge.summary = buf;
+        }
+        g_bridge.hasResult = true;
+        g_bridge.lastCompleted = !res.stopped;
+        g_bridge.lastStopped = res.stopped;
+        g_bridge.lastTrainLoss = res.trainLoss;
+        g_bridge.lastTrainAcc = res.trainAcc;
+        g_bridge.lastValLoss = res.valLoss;
+        g_bridge.lastValAcc = res.valAcc;
+        g_bridge.lastTestLoss = res.testLoss;
+        g_bridge.lastTestAcc = res.testAcc;
+        g_bridge.lastHasVal = res.hasVal;
+        g_bridge.lastHasTest = res.hasTest;
+        g_bridge.lastWarning = res.warning;
+        g_bridge.lastConfusion = res.confusion;
+        g_bridge.lastNumClasses = res.numClasses;
+        g_bridge.lastHasConfusion = res.hasConfusion;
+        g_bridge.lastConfusionOnTrain = res.confusionOnTrain;
+        g_bridge.lastArch = describeNet(res.net);
+        g_bridge.lastOptDesc = cfg.optimizer + " lr=" + std::to_string(cfg.opt.learningRate);
+        std::size_t effB = (cfg.batchSize == 0 || cfg.batchSize > res.data.nTrain)
+            ? res.data.nTrain : cfg.batchSize;
+        g_bridge.lastBatchTxt = (cfg.batchSize == 0 ? std::string("full")
+            : std::to_string(cfg.batchSize)) + " (eff " + std::to_string(effB) + ")";
+        g_bridge.lastSeed = (int)cfg.seed;
+        g_bridge.lastDsDesc = res.data.name + " " + std::to_string(res.data.samples) + " samples";
+        g_bridge.lastLoss = cfg.loss;
+        if (res.hasTest) {
+            char splitBuf[128];
+            std::snprintf(splitBuf, sizeof(splitBuf), "Train %llu | Val %llu | Test %llu",
+                          (unsigned long long)res.data.nTrain, (unsigned long long)res.data.nVal,
+                          (unsigned long long)res.data.nTest);
+            g_bridge.lastSplitTxt = splitBuf;
+        } else {
+            g_bridge.lastSplitTxt = "Train " + std::to_string(res.data.nTrain) +
+                " (full table — no held-out val/test)";
+        }
+        if (res.hasNet) {
+            g_bridge.lastNet = std::make_shared<NeuralNetwork>(res.net);
+            g_bridge.lastTrain = res.data.train;
+            g_bridge.lastTest = res.data.test;
+            g_bridge.lastInDim = res.data.inDim;
+            g_bridge.lastOutDim = res.data.outDim;
+            g_bridge.lastEpochsRun = (int)res.history.trainLoss.size();
+            g_bridge.lastEpochsTarget = cfg.epochs;
+            g_bridge.lastTiny = res.data.tiny;
+        }
+        g_bridge.runSeq++;
     }
 
     static std::string describeNet(const NeuralNetwork& net) {
@@ -2631,6 +2711,7 @@ private:
             form->addRow(key, val);
         };
         row("Dataset", QString::fromStdString(g_bridge.lastDsDesc));
+        row("Split", QString::fromStdString(g_bridge.lastSplitTxt));
         row("Architecture", QString::fromStdString(g_bridge.lastArch));
         row("Optimizer", QString::fromStdString(g_bridge.lastOptDesc));
         row("Loss", QString::fromStdString(g_bridge.lastLoss));
@@ -2643,13 +2724,18 @@ private:
             row("Val Loss", QString::asprintf("%.4f", g_bridge.lastValLoss));
             row("Val Acc", QString::asprintf("%.1f%%", g_bridge.lastValAcc * 100.0));
         }
-        row("Test Loss", QString::asprintf("%.4f", g_bridge.lastTestLoss));
-        row("Test Acc", QString::asprintf("%.1f%%", g_bridge.lastTestAcc * 100.0));
-        if (g_bridge.lastTiny)
-            row("Note", QStringLiteral("Tiny dataset: test == train set."));
+        if (g_bridge.lastHasTest) {
+            row("Test Loss", QString::asprintf("%.4f", g_bridge.lastTestLoss));
+            row("Test Acc", QString::asprintf("%.1f%%", g_bridge.lastTestAcc * 100.0));
+        } else {
+            row("Test Loss", QStringLiteral("n/a (no held-out test set)"));
+            row("Test Acc", QStringLiteral("n/a (no held-out test set)"));
+        }
         lay->addLayout(form);
         if (g_bridge.lastHasConfusion && g_bridge.lastNumClasses >= 2 && g_bridge.lastNumClasses <= 10) {
-            auto* cmTitle = new QLabel(QStringLiteral("Confusion matrix (rows = actual, cols = predicted)"));
+            auto* cmTitle = new QLabel(g_bridge.lastConfusionOnTrain
+                ? QStringLiteral("Confusion matrix on the TRAIN set (no held-out test exists)")
+                : QStringLiteral("Confusion matrix on the TEST set (rows = actual, cols = predicted)"));
             cmTitle->setStyleSheet(QStringLiteral("color:#8A90A0;"));
             lay->addWidget(cmTitle);
             std::size_t k = g_bridge.lastNumClasses;
@@ -2768,9 +2854,9 @@ private:
     }
 
     void pushUiFromState() {
-        checkOnly(m_dsBtns, (int)m_dataset);
-        checkOnly(m_lossBtns, (int)m_loss);
-        checkOnly(m_optBtns, (int)m_opt);
+        m_dsGroup.checkOnly((int)m_dataset);
+        m_lossGroup.checkOnly((int)m_loss);
+        m_optGroup.checkOnly((int)m_opt);
         m_outActCombo->blockSignals(true);
         for (int i = 0; i < 6; ++i)
             if (m_outputAct == kOutActKeys[i]) m_outActCombo->setCurrentIndex(i);
@@ -2802,6 +2888,15 @@ private:
         m_shuffleChk->blockSignals(true);
         m_shuffleChk->setChecked(m_shuffle);
         m_shuffleChk->blockSignals(false);
+        m_splitShuffleChk->blockSignals(true);
+        m_splitShuffleChk->setChecked(m_splitShuffle);
+        m_splitShuffleChk->blockSignals(false);
+        m_trainPctSpin->blockSignals(true);
+        m_trainPctSpin->setValue(m_trainPct);
+        m_trainPctSpin->blockSignals(false);
+        m_valPctSpin->blockSignals(true);
+        m_valPctSpin->setValue(m_valPct);
+        m_valPctSpin->blockSignals(false);
         m_normCombo->blockSignals(true);
         m_normCombo->setCurrentIndex(m_normMode);
         m_normCombo->blockSignals(false);
