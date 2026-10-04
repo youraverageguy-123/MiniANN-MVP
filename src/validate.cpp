@@ -144,7 +144,6 @@ ConfigValidator ConfigValidator::defaults() {
     v.addRule(std::make_unique<LinearCceNote>());
     v.addRule(std::make_unique<BceNonSigmoidNote>());
     v.addRule(std::make_unique<EffectiveBatchNote>());
-    v.addRule(std::make_unique<TinyDatasetNote>());
     return v;
 }
 

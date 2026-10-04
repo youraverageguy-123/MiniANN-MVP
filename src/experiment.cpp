@@ -13,22 +13,6 @@
 
 namespace miniann {
 
-namespace {
-
-int csvColumnCount(const std::string& path) {
-    std::ifstream file(path);
-    if (!file.is_open()) return 0;
-    std::string line;
-    if (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::string cell;
-        int count = 0;
-        while (std::getline(ss, cell, ',')) count++;
-        return count;
-    }
-    return 0;
-}
-
 // Distinct target values of a single-output dataset.
 std::vector<double> distinctTargets(const Dataset& d) {
     std::vector<double> vals;
@@ -132,8 +116,6 @@ struct ControlCallback : public TrainingCallback {
         return stop && stop->load();
     }
 };
-
-} // namespace
 
 PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
     Dataset raw;
@@ -280,7 +262,7 @@ PreparedData ExperimentController::prepare(const ExperimentConfig& cfg) {
     d.nVal = d.val.size();
     d.nTest = d.test.size();
     d.train.validate();
-    d.test.validate();
+    if (d.hasTest) d.test.validate();
     if (d.hasVal) d.val.validate();
     return d;
 }
