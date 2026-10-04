@@ -80,6 +80,37 @@ TrainingHistory Trainer::fit(const Dataset& train, const Dataset* validation,
                 Vector pred = net_.predict(train.input(si));
                 net_.backward(loss_.gradient(pred, train.target(si)));
             }
+            if (cfg.weightDecay > 0.0) {
+                for (auto& layer : net_.layers()) {
+                    for (auto& neuron : layer.neurons()) {
+                        auto& gw = neuron.gradWeights();
+                        const auto& w = neuron.weights();
+                        for (std::size_t i = 0; i < w.size(); ++i) {
+                            gw[i] += cfg.weightDecay * double(bs) * w[i];
+                        }
+                    }
+                }
+            }
+            if (cfg.gradClip > 0.0) {
+                double sumSq = 0.0;
+                for (const auto& layer : net_.layers()) {
+                    for (const auto& neuron : layer.neurons()) {
+                        for (double g : neuron.gradWeights()) sumSq += (g / double(bs)) * (g / double(bs));
+                        double gb = neuron.gradBias() / double(bs);
+                        sumSq += gb * gb;
+                    }
+                }
+                double totalNorm = std::sqrt(sumSq);
+                if (totalNorm > cfg.gradClip && totalNorm > 1e-12) {
+                    double scale = cfg.gradClip / totalNorm;
+                    for (auto& layer : net_.layers()) {
+                        for (auto& neuron : layer.neurons()) {
+                            for (double& g : neuron.gradWeights()) g *= scale;
+                            neuron.gradBias() *= scale;
+                        }
+                    }
+                }
+            }
             opt_.step(net_, bs);
         }
 

@@ -60,7 +60,9 @@ public:
     const Vector& weights() const { return weights_; }
     double bias() const { return bias_; }
     const Vector& gradWeights() const { return gradWeights_; }
+    Vector& gradWeights() { return gradWeights_; }
     double gradBias() const { return gradBias_; }
+    double& gradBias() { return gradBias_; }
     const IActivation& activation() const { return *activation_; }
     double lastZ() const { return lastZ_; }
     // Raw logit z = b + w.x (caches inputs/z, clears softmax override).

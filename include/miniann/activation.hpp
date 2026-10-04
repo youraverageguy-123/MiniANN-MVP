@@ -59,6 +59,24 @@ private:
     double alpha_;
 };
 
+class ELU : public IActivation {
+public:
+    explicit ELU(double alpha = 1.0) : alpha_(alpha) {
+        if (alpha <= 0.0)
+            throw std::invalid_argument("ELU: alpha must be > 0");
+    }
+    double activate(double z) const override {
+        return z > 0.0 ? z : alpha_ * (std::exp(z) - 1.0);
+    }
+    double derivative(double z) const override {
+        return z > 0.0 ? 1.0 : alpha_ * std::exp(z);
+    }
+    std::string name() const override { return "elu"; }
+    double alpha() const { return alpha_; }
+private:
+    double alpha_;
+};
+
 class Swish : public IActivation {
 public:
     double activate(double z) const override {

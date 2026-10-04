@@ -33,10 +33,21 @@ int main() {
         assert(dl < 1e-6 || z == 0.0); // kink only exactly at 0
     }
 
+    ELU elu(1.0);
+    assert(elu.activate(2.0) == 2.0);
+    assert(std::abs(elu.activate(-1.0) - (std::exp(-1.0) - 1.0)) < 1e-12);
+    assert(elu.derivative(3.0) == 1.0);
+    assert(std::abs(elu.derivative(-1.0) - std::exp(-1.0)) < 1e-12);
+    for (double z : {-2.0, -0.5, 0.7, 3.0}) {
+        double d = std::abs(elu.derivative(z) - numDeriv(elu, z));
+        double denom = std::max(std::abs(elu.derivative(z)), 1e-8);
+        assert(d / denom < 1e-5);
+    }
+
     // factories resolve every advertised token, reject garbage
-    for (const char* t : {"sigmoid", "tanh", "relu", "leaky_relu", "swish", "linear", "softmax"})
+    for (const char* t : {"sigmoid", "tanh", "relu", "leaky_relu", "swish", "linear", "softmax", "elu"})
         assert(ActivationFactory::create(t) != nullptr);
-    for (const char* t : {"sgd", "momentum", "adam"})
+    for (const char* t : {"sgd", "momentum", "adam", "rmsprop"})
         assert(OptimizerFactory::create(t, 0.01) != nullptr);
     for (const char* t : {"mse", "bce", "cce"})
         assert(LossFactory::create(t) != nullptr);
@@ -88,6 +99,8 @@ int main() {
     assert(OptimizerFactory::create("sgd", 0.01)->name() == "sgd");
     assert(OptimizerFactory::create("momentum", 0.01)->name() == "momentum");
     assert(OptimizerFactory::create("adam", 0.01)->name() == "adam");
+    assert(OptimizerFactory::create("rmsprop", 0.01)->name() == "rmsprop");
+    assert(ActivationFactory::create("elu")->name() == "elu");
     std::cout << "LOSS + OPTIMIZER NAMES PASS\n";
     return 0;
 }

@@ -43,6 +43,8 @@ struct ExperimentConfig {
     std::string optimizer = "adam";
     OptimizerConfig opt;
     std::string lrScheduler = "Constant";
+    double weightDecay = 0.0;
+    double gradClip = 0.0;
     int epochs = 1500;
     std::size_t batchSize = 1;   // 0 = full batch
 };

@@ -17,6 +17,8 @@ struct TrainingConfig {
     bool shuffle = true;
     unsigned seed = 42;
     int logEvery = 100;
+    double weightDecay = 0.0; // L2 weight decay regularization (e.g. 1e-4)
+    double gradClip = 0.0;    // max gradient norm clipping (0 = disabled)
     // Throws std::invalid_argument for settings that would crash or make no
     // sense (epochs < 1, logEvery < 1). Called by Trainer::fit().
     void validate() const;

@@ -80,28 +80,28 @@
 using namespace miniann;
 
 enum ActiveDataset { DS_AND = 0, DS_OR = 1, DS_XOR = 2, DS_IRIS = 3, DS_CSV = 4 };
-enum ActiveActivation { ACT_SIGMOID = 0, ACT_TANH = 1, ACT_RELU = 2, ACT_LEAKY_RELU = 3, ACT_SWISH = 4 };
+enum ActiveActivation { ACT_SIGMOID = 0, ACT_TANH = 1, ACT_RELU = 2, ACT_LEAKY_RELU = 3, ACT_SWISH = 4, ACT_ELU = 5 };
 enum ActiveLoss { LOSS_MSE = 0, LOSS_BCE = 1, LOSS_CCE = 2 };
-enum ActiveOptimizer { OPT_SGD = 0, OPT_MOMENTUM = 1, OPT_ADAM = 2 };
+enum ActiveOptimizer { OPT_SGD = 0, OPT_MOMENTUM = 1, OPT_ADAM = 2, OPT_RMSPROP = 3 };
 enum ViewMode { VIEW_LOSS = 0, VIEW_ACC = 1, VIEW_BOUNDARY = 2, VIEW_NETWORK = 3 };
 
 static const char* kDsNames[5] = {"AND", "OR", "XOR", "Iris", "CSV"};
 static const char* kDsKeys[5] = {"and", "or", "xor", "iris", "csv"};
-static const char* kActLabels[5] = {"Sig", "Tanh", "ReLU", "L-ReLU", "Swish"};
-static const char* kActKeys[5] = {"sigmoid", "tanh", "relu", "leaky_relu", "swish"};
+static const char* kActLabels[6] = {"Sig", "Tanh", "ReLU", "L-ReLU", "Swish", "ELU"};
+static const char* kActKeys[6] = {"sigmoid", "tanh", "relu", "leaky_relu", "swish", "elu"};
 static const char* kLossKeys[3] = {"mse", "bce", "cce"};
 static const char* kLossLabels[3] = {"MSE", "BCE", "CCE"};
-static const char* kOptKeys[3] = {"sgd", "momentum", "adam"};
-static const char* kOptLabels[3] = {"SGD", "Mom.", "Adam"};
-static const char* kOutActKeys[6] = {"sigmoid", "tanh", "relu", "leaky_relu", "swish", "linear"};
-static const char* kOutActLabels[6] = {"Sigmoid", "Tanh", "ReLU", "L-ReLU", "Swish", "Linear"};
+static const char* kOptKeys[4] = {"sgd", "momentum", "adam", "rmsprop"};
+static const char* kOptLabels[4] = {"SGD", "Mom.", "Adam", "RMSprop"};
+static const char* kOutActKeys[7] = {"sigmoid", "tanh", "relu", "leaky_relu", "swish", "elu", "linear"};
+static const char* kOutActLabels[7] = {"Sigmoid", "Tanh", "ReLU", "L-ReLU", "Swish", "ELU", "Linear"};
 static const std::size_t kBatchVals[7] = {1, 8, 16, 32, 64, 128, 0};
 static const char* kBatchLabels[7] = {"1", "8", "16", "32", "64", "128", "Full"};
 static const char* kClassColors[6] = {"#3B82F6", "#EF4444", "#22C55E", "#F59E0B", "#A855F7", "#14B8A6"};
 
 static std::string actToName(ActiveActivation a) { return kActKeys[(int)a]; }
 static ActiveActivation actFromName(const std::string& n) {
-    for (int a = 0; a < 5; ++a)
+    for (int a = 0; a < 6; ++a)
         if (n == kActKeys[a]) return ActiveActivation(a);
     throw std::invalid_argument("unsupported hidden activation '" + n + "'");
 }
@@ -1070,12 +1070,12 @@ public:
         m_head = new QPushButton;
         m_head->setCursor(Qt::PointingHandCursor);
         m_head->setFlat(true);
-        m_head->setMinimumHeight(26);
+        m_head->setMinimumHeight(28);
         m_head->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         m_head->setStyleSheet(QStringLiteral(
-            "QPushButton { text-align:left; background:transparent; border:none;"
-            " border-radius:0px; padding:4px 6px; color:#94A3B8; font-weight:700; font-size:11px; letter-spacing:0.5px; }"
-            "QPushButton:hover { background:rgba(255,255,255,0.04); color:#F1F5F9; }"));
+            "QPushButton { text-align:left; background:#0D111C; border:1px solid #1E293B;"
+            " border-left:3px solid #0284C7; border-radius:0px; padding:6px 10px; color:#F1F5F9; font-weight:700; font-size:11px; letter-spacing:0.5px; }"
+            "QPushButton:hover { background:#162035; border-color:#38BDF8; color:#FFFFFF; }"));
         connect(m_head, &QPushButton::clicked, [this]() { setExpanded(!m_expanded); });
         outer->addWidget(m_head);
 
@@ -1473,6 +1473,14 @@ private:
     QCheckBox* m_splitShuffleChk = nullptr;
     QSpinBox* m_trainPctSpin = nullptr, *m_valPctSpin = nullptr;
     QLabel* m_testPctLbl = nullptr;
+    QLabel* m_legTrainLbl = nullptr, *m_legValLbl = nullptr, *m_legTestLbl = nullptr;
+    QWidget* m_rmspropRow = nullptr;
+    QDoubleSpinBox* m_rmspropAlphaSpin = nullptr;
+    QDoubleSpinBox* m_weightDecaySpin = nullptr;
+    QDoubleSpinBox* m_gradClipSpin = nullptr;
+    double m_rmspropAlpha = 0.99;
+    double m_weightDecay = 0.0;
+    double m_gradClip = 0.0;
     QComboBox* m_normCombo = nullptr;
     std::vector<QPushButton*> m_lossBtns;
     std::vector<QPushButton*> m_optBtns;
@@ -1600,6 +1608,9 @@ private:
         c.opt.beta1 = m_beta1;
         c.opt.beta2 = m_beta2;
         c.opt.epsilon = m_eps;
+        c.opt.alpha = m_rmspropAlpha;
+        c.weightDecay = m_weightDecay;
+        c.gradClip = m_gradClip;
         if (m_schedulerCombo) {
             c.lrScheduler = m_schedulerCombo->currentText().toStdString();
         }
@@ -1732,34 +1743,34 @@ private:
         outer->addWidget(m_cfgScroll, 1);
 
         // presets
-        auto* preRow = new QHBoxLayout;
-        preRow->setSpacing(8);
-        auto* preLbl = new QLabel(QStringLiteral("PRESETS"));
+        auto* preBox = new QFrame;
+        preBox->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
+        auto* preBoxLay = new QVBoxLayout(preBox);
+        preBoxLay->setContentsMargins(8, 6, 8, 6);
+        preBoxLay->setSpacing(6);
+        auto* preLbl = new QLabel(QStringLiteral("TOPOLOGY PRESETS"));
         preLbl->setStyleSheet(QStringLiteral("color:#64748B; font-weight:700; font-size:10px; letter-spacing:0.5px;"));
-        preRow->addWidget(preLbl);
-        auto* preWell = new QFrame;
-        preWell->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
-        auto* preWellLay = new QHBoxLayout(preWell);
-        preWellLay->setContentsMargins(2, 2, 2, 2);
-        preWellLay->setSpacing(2);
-        const char* preNames[3] = {"XOR", "Iris", "Binary"};
+        preBoxLay->addWidget(preLbl);
+        auto* preWell = new QHBoxLayout;
+        preWell->setSpacing(6);
+        const char* preNames[3] = {"XOR", "Iris (4-6-3)", "Binary Gates"};
         for (int i = 0; i < 3; ++i) {
             QPushButton* b = new QPushButton(QString::fromLatin1(preNames[i]));
             b->setCursor(Qt::PointingHandCursor);
             b->setFixedHeight(26);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setStyleSheet(QStringLiteral(
-                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:11px; font-weight:600; padding:4px 8px; }"
-                "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
+                "QPushButton { background:#0F1420; color:#CBD5E1; border:1px solid #1E293B; border-radius:0px; font-size:11px; font-weight:600; padding:3px 6px; }"
+                "QPushButton:hover { background:#1E293B; border-color:#38BDF8; color:#FFFFFF; }"
                 "QPushButton:pressed { background:#0284C7; color:#FFFFFF; }"));
-            preWellLay->addWidget(b);
+            preWell->addWidget(b);
             m_presetBtns.push_back(b);
         }
         connect(m_presetBtns[0], &QPushButton::clicked, [this]() { applyPresetXor(true); });
         connect(m_presetBtns[1], &QPushButton::clicked, [this]() { applyPresetIris(); });
         connect(m_presetBtns[2], &QPushButton::clicked, [this]() { applyPresetBinary(); });
-        preRow->addWidget(preWell, 1);
-        lv->addLayout(preRow);
+        preBoxLay->addLayout(preWell);
+        lv->addWidget(preBox);
 
         // 1. dataset
         auto* sec1 = new CollapsibleSection(QStringLiteral("1. DATASET"), true, m_configBox);
@@ -1777,7 +1788,7 @@ private:
             b->setFixedHeight(28);
             b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
             b->setStyleSheet(QStringLiteral(
-                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:11px; font-weight:600; padding:4px 6px; }"
+                "QPushButton { background:transparent; color:#94A3B8; border:none; border-radius:0px; font-size:11px; font-weight:700; padding:4px 6px; }"
                 "QPushButton:hover { background:rgba(255,255,255,0.06); color:#F1F5F9; }"
                 "QPushButton:checked { background:#0284C7; color:#FFFFFF; border:1px solid #38BDF8; font-weight:bold; }"));
             dsWellLay->addWidget(b);
@@ -1792,63 +1803,108 @@ private:
         }
         s1->addWidget(dsWell);
 
-        // dataset info
+        // dataset info panel (HUD-styled key-value table)
         auto* dsInfoPanel = new QFrame;
         dsInfoPanel->setObjectName(QStringLiteral("panel"));
         dsInfoPanel->setStyleSheet(QStringLiteral(
             "background:#0A0E17; border:1px solid #1E293B; border-radius:0px;"));
         auto* dsInfoLay = new QVBoxLayout(dsInfoPanel);
-        dsInfoLay->setContentsMargins(12, 10, 12, 10);
+        dsInfoLay->setContentsMargins(10, 8, 10, 8);
         dsInfoLay->setSpacing(0);
         m_dsInfoLbl = new QLabel;
-        m_dsInfoLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; line-height:140%;"));
+        m_dsInfoLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px;"));
+        m_dsInfoLbl->setTextFormat(Qt::RichText);
         m_dsInfoLbl->setWordWrap(true);
         dsInfoLay->addWidget(m_dsInfoLbl);
         s1->addWidget(dsInfoPanel);
 
-        // Dataset split (§8 of the split spec): test share is automatic.
-        auto* splitRow = new QHBoxLayout;
-        splitRow->setSpacing(6);
-        auto* splitLbl = new QLabel(QStringLiteral("SPLIT"));
-        splitLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
-        splitRow->addWidget(splitLbl);
+        // Dataset partition card (structured columns + visual split bar + color-coded legend)
+        auto* splitCard = new QFrame;
+        splitCard->setStyleSheet(QStringLiteral("background:#080C14; border:1px solid #1E293B; border-radius:0px;"));
+        auto* splitCardLay = new QVBoxLayout(splitCard);
+        splitCardLay->setContentsMargins(10, 8, 10, 8);
+        splitCardLay->setSpacing(8);
+
+        auto* splitInputsRow = new QHBoxLayout;
+        splitInputsRow->setSpacing(8);
+
+        // Train col
+        auto* trBox = new QVBoxLayout;
+        trBox->setSpacing(2);
+        auto* trLbl = new QLabel(QStringLiteral("TRAIN"));
+        trLbl->setStyleSheet(QStringLiteral("color:#38BDF8; font-size:10px; font-weight:700;"));
+        trBox->addWidget(trLbl);
         m_trainPctSpin = new QSpinBox;
         m_trainPctSpin->setRange(1, 98);
         m_trainPctSpin->setValue(80);
-        m_trainPctSpin->setFixedWidth(64);
         m_trainPctSpin->setSuffix(QStringLiteral("%"));
-        m_trainPctSpin->setToolTip(QStringLiteral("Training share of the dataset"));
+        m_trainPctSpin->setToolTip(QStringLiteral("Training share of dataset"));
         connect(m_trainPctSpin, &QSpinBox::valueChanged, [this](int v) {
             m_trainPct = v;
+            if (m_trainPct + m_valPct > 100) {
+                m_valPct = 100 - m_trainPct;
+                m_valPctSpin->setValue(m_valPct);
+            }
             configChanged();
         });
-        splitRow->addWidget(m_trainPctSpin);
-        auto* trainPctLbl = new QLabel(QStringLiteral("train"));
-        trainPctLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
-        splitRow->addWidget(trainPctLbl);
+        trBox->addWidget(m_trainPctSpin);
+        splitInputsRow->addLayout(trBox, 1);
+
+        // Val col
+        auto* vaBox = new QVBoxLayout;
+        vaBox->setSpacing(2);
+        auto* vaLbl = new QLabel(QStringLiteral("VAL"));
+        vaLbl->setStyleSheet(QStringLiteral("color:#F59E0B; font-size:10px; font-weight:700;"));
+        vaBox->addWidget(vaLbl);
         m_valPctSpin = new QSpinBox;
         m_valPctSpin->setRange(0, 98);
         m_valPctSpin->setValue(10);
-        m_valPctSpin->setFixedWidth(64);
         m_valPctSpin->setSuffix(QStringLiteral("%"));
-        m_valPctSpin->setToolTip(QStringLiteral("Validation share of the dataset"));
+        m_valPctSpin->setToolTip(QStringLiteral("Validation share of dataset"));
         connect(m_valPctSpin, &QSpinBox::valueChanged, [this](int v) {
             m_valPct = v;
+            if (m_trainPct + m_valPct > 100) {
+                m_trainPct = 100 - m_valPct;
+                m_trainPctSpin->setValue(m_trainPct);
+            }
             configChanged();
         });
-        splitRow->addWidget(m_valPctSpin);
-        auto* valPctLbl = new QLabel(QStringLiteral("val"));
-        valPctLbl->setStyleSheet(QStringLiteral("color:#C9CDD8;"));
-        splitRow->addWidget(valPctLbl);
+        vaBox->addWidget(m_valPctSpin);
+        splitInputsRow->addLayout(vaBox, 1);
+
+        // Test col
+        auto* teBox = new QVBoxLayout;
+        teBox->setSpacing(2);
+        auto* teLbl = new QLabel(QStringLiteral("TEST"));
+        teLbl->setStyleSheet(QStringLiteral("color:#10B981; font-size:10px; font-weight:700;"));
+        teBox->addWidget(teLbl);
         m_testPctLbl = new QLabel;
-        m_testPctLbl->setStyleSheet(QStringLiteral("color:#8A90A0;"));
-        splitRow->addWidget(m_testPctLbl);
-        splitRow->addStretch(1);
-        s1->addLayout(splitRow);
+        m_testPctLbl->setStyleSheet(QStringLiteral("background:#0F1420; color:#10B981; border:1px solid #1E293B; padding:4px 6px; font-size:12px; font-weight:700;"));
+        m_testPctLbl->setAlignment(Qt::AlignCenter);
+        teBox->addWidget(m_testPctLbl);
+        splitInputsRow->addLayout(teBox, 1);
+
+        splitCardLay->addLayout(splitInputsRow);
 
         m_splitBar = new SplitBarWidget;
-        m_splitBar->setSplits(m_trainPct, m_valPct, std::max(0, 100 - m_trainPct - m_valPct));
-        s1->addWidget(m_splitBar);
+        splitCardLay->addWidget(m_splitBar);
+
+        // Color-dot legend row
+        auto* legRow = new QHBoxLayout;
+        legRow->setSpacing(10);
+        m_legTrainLbl = new QLabel(QStringLiteral("● Train"));
+        m_legTrainLbl->setStyleSheet(QStringLiteral("color:#38BDF8; font-size:10px; font-weight:600;"));
+        m_legValLbl = new QLabel(QStringLiteral("● Val"));
+        m_legValLbl->setStyleSheet(QStringLiteral("color:#F59E0B; font-size:10px; font-weight:600;"));
+        m_legTestLbl = new QLabel(QStringLiteral("● Test"));
+        m_legTestLbl->setStyleSheet(QStringLiteral("color:#10B981; font-size:10px; font-weight:600;"));
+        legRow->addWidget(m_legTrainLbl);
+        legRow->addWidget(m_legValLbl);
+        legRow->addWidget(m_legTestLbl);
+        legRow->addStretch(1);
+        splitCardLay->addLayout(legRow);
+
+        s1->addWidget(splitCard);
 
         // CSV options row
         m_csvRow = new QWidget;
@@ -2004,7 +2060,7 @@ private:
         m_outActCombo->setCurrentIndex(0);
         m_outActCombo->setMinimumWidth(110);
         connect(m_outActCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this](int i) {
-            m_outputAct = kOutActKeys[std::max(0, std::min(5, i))];
+            m_outputAct = kOutActKeys[std::max(0, std::min(6, i))];
             configChanged();
         });
         outRow->addWidget(m_outActCombo);
@@ -2177,6 +2233,43 @@ private:
         sCol->addWidget(m_seedSpin);
         paramGrid->addLayout(sCol, 1, 1);
 
+        // L2 Regularization (Weight Decay)
+        auto* wdCol = new QVBoxLayout;
+        wdCol->setSpacing(4);
+        auto* wdLbl = new QLabel(QStringLiteral("L2 WEIGHT DECAY"));
+        wdLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        wdCol->addWidget(wdLbl);
+        m_weightDecaySpin = new QDoubleSpinBox;
+        m_weightDecaySpin->setRange(0.0, 0.1);
+        m_weightDecaySpin->setDecimals(5);
+        m_weightDecaySpin->setSingleStep(0.0001);
+        m_weightDecaySpin->setValue(0.0);
+        m_weightDecaySpin->setSpecialValueText(QStringLiteral("0 (none)"));
+        connect(m_weightDecaySpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+            m_weightDecay = v;
+            configChanged();
+        });
+        wdCol->addWidget(m_weightDecaySpin);
+        paramGrid->addLayout(wdCol, 2, 0);
+
+        // Gradient Norm Clipping
+        auto* gcCol = new QVBoxLayout;
+        gcCol->setSpacing(4);
+        auto* gcLbl = new QLabel(QStringLiteral("GRAD CLIPPING"));
+        gcLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:10px; font-weight:700; letter-spacing:0.5px;"));
+        gcCol->addWidget(gcLbl);
+        m_gradClipSpin = new QDoubleSpinBox;
+        m_gradClipSpin->setRange(0.0, 100.0);
+        m_gradClipSpin->setDecimals(2);
+        m_gradClipSpin->setValue(0.0);
+        m_gradClipSpin->setSpecialValueText(QStringLiteral("none"));
+        connect(m_gradClipSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+            m_gradClip = v;
+            configChanged();
+        });
+        gcCol->addWidget(m_gradClipSpin);
+        paramGrid->addLayout(gcCol, 2, 1);
+
         // LR Schedule Strategy
         auto* schCol = new QVBoxLayout;
         schCol->setSpacing(4);
@@ -2190,7 +2283,7 @@ private:
             configChanged();
         });
         schCol->addWidget(m_schedulerCombo);
-        paramGrid->addLayout(schCol, 2, 0, 1, 2);
+        paramGrid->addLayout(schCol, 3, 0, 1, 2);
 
         trainCardLay->addLayout(paramGrid);
 
@@ -2273,7 +2366,7 @@ private:
         auto* optWellLay = new QHBoxLayout(optWell);
         optWellLay->setContentsMargins(2, 2, 2, 2);
         optWellLay->setSpacing(2);
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 4; ++i) {
             QPushButton* b = new QPushButton(QString::fromLatin1(kOptLabels[i]));
             b->setCheckable(true);
             b->setCursor(Qt::PointingHandCursor);
@@ -2287,7 +2380,7 @@ private:
             m_optBtns.push_back(b);
         }
         for (QPushButton* b : m_optBtns) m_optGroup.addButton(b);
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 4; ++i) {
             connect(m_optBtns[(std::size_t)i], &QPushButton::clicked, [this, i]() {
                 m_opt = ActiveOptimizer(i);
                 applyOptimizerDefaults();
@@ -2368,6 +2461,24 @@ private:
         adLay->addLayout(epsCol);
 
         optCardLay->addWidget(m_adamRow);
+
+        m_rmspropRow = new QWidget;
+        auto* rmsLay = new QHBoxLayout(m_rmspropRow);
+        rmsLay->setContentsMargins(0, 0, 0, 0);
+        rmsLay->setSpacing(8);
+        auto* rmsLbl = new QLabel(QStringLiteral("Decay (α)"));
+        rmsLbl->setStyleSheet(QStringLiteral("color:#94A3B8; font-size:11px; font-weight:600;"));
+        rmsLay->addWidget(rmsLbl);
+        m_rmspropAlphaSpin = new QDoubleSpinBox;
+        m_rmspropAlphaSpin->setRange(0.5, 0.9999);
+        m_rmspropAlphaSpin->setDecimals(4);
+        m_rmspropAlphaSpin->setValue(0.99);
+        connect(m_rmspropAlphaSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), [this](double v) {
+            m_rmspropAlpha = v;
+            configChanged();
+        });
+        rmsLay->addWidget(m_rmspropAlphaSpin, 1);
+        optCardLay->addWidget(m_rmspropRow);
 
         s4->addWidget(optCard);
 
@@ -2744,7 +2855,7 @@ private:
                 for (auto lbl : kActLabels) ac->addItem(QString::fromLatin1(lbl));
                 ac->setCurrentIndex((int)st->work[i].act);
                 connect(ac, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                        [st, i](int a) { st->work[i].act = ActiveActivation(std::max(0, std::min(4, a))); });
+                        [st, i](int a) { st->work[i].act = ActiveActivation(std::max(0, std::min(5, a))); });
                 rl->addWidget(ac, 1);
                 auto* up = new QPushButton(QStringLiteral("^"));
                 up->setFixedWidth(30);
@@ -2833,6 +2944,7 @@ private:
             if (n == "relu") return QStringLiteral("ReLU");
             if (n == "leaky_relu") return QStringLiteral("L-ReLU");
             if (n == "swish") return QStringLiteral("Swish");
+            if (n == "elu") return QStringLiteral("ELU");
             return QStringLiteral("Lin");
         };
         ad.sizes.push_back(m_preview.inDim);
@@ -2858,6 +2970,7 @@ private:
         refreshPreview();
         m_muRow->setVisible(m_opt == OPT_MOMENTUM);
         m_adamRow->setVisible(m_opt == OPT_ADAM);
+        if (m_rmspropRow) m_rmspropRow->setVisible(m_opt == OPT_RMSPROP);
         m_csvRow->setVisible(m_dataset == DS_CSV);
         m_csvPathLbl->setText(m_csvPath.empty() ? QStringLiteral("No file — drag and drop a .csv file onto the window.")
                                                 : QString::fromStdString(m_csvPath));
@@ -2901,39 +3014,63 @@ private:
         }
         {
             const PreparedData& d = m_preview;
-            QString info = QString::asprintf("Dataset: %s\nSamples: %llu | Features: %llu | Classes: ",
-                                                     d.name.c_str(), (unsigned long long)d.samples,
-                                                     (unsigned long long)d.features)
-                + (d.discreteClasses ? QString::number((unsigned long long)d.classes) : QStringLiteral("—"))
-                + QStringLiteral("\n");
-            {
-                QString tstat;
-                if (d.targetDistinct <= 32)
-                    tstat = QString::asprintf("%llu distinct values [%g..%g]",
-                        (unsigned long long)d.targetDistinct, d.targetMin, d.targetMax);
-                else
-                    tstat = QString::asprintf("many distinct values [%g..%g]",
-                        d.targetMin, d.targetMax);
-                info += QString::asprintf("Target: col %d — ", d.targetColUsed) + tstat;
-                if (!d.targetNote.empty())
-                    info += QStringLiteral(" (") + QString::fromStdString(d.targetNote) + QStringLiteral(")");
-                info += QStringLiteral("\n");
+            QString targetDesc;
+            if (d.targetDistinct <= 32)
+                targetDesc = QString::asprintf("Col %d (%llu distinct [%g..%g])",
+                    d.targetColUsed, (unsigned long long)d.targetDistinct, d.targetMin, d.targetMax);
+            else
+                targetDesc = QString::asprintf("Col %d ([%g..%g])",
+                    d.targetColUsed, d.targetMin, d.targetMax);
+
+            QString splitStatus = d.tiny
+                ? QStringLiteral("<span style='color:#F59E0B;'>Full Table (Tiny Dataset — 100% Train)</span>")
+                : QString::asprintf("<span style='color:#10B981;'>Train: %llu · Val: %llu · Test: %llu</span>",
+                                    (unsigned long long)d.nTrain,
+                                    (unsigned long long)d.nVal,
+                                    (unsigned long long)d.nTest);
+
+            QString classDesc = d.discreteClasses
+                ? QString::asprintf("%llu discrete classes", (unsigned long long)d.classes)
+                : QStringLiteral("continuous values");
+
+            QString infoHtml = QStringLiteral(
+                "<table style='width:100%; border-collapse:collapse; font-size:11px;'>"
+                "<tr><td style='color:#64748B; font-weight:700; padding:2px 0;'>DATASET</td>"
+                "<td style='color:#38BDF8; font-weight:bold; text-align:right;'>%1</td></tr>"
+                "<tr><td style='color:#64748B; padding:2px 0;'>SAMPLES / FEATURES</td>"
+                "<td style='color:#F1F5F9; font-weight:600; text-align:right;'>%2 samples · %3 features</td></tr>"
+                "<tr><td style='color:#64748B; padding:2px 0;'>TARGET / CLASSES</td>"
+                "<td style='color:#F1F5F9; font-weight:600; text-align:right;'>%4 · %5</td></tr>"
+                "<tr><td style='color:#64748B; padding:2px 0;'>IN / OUT DIMS</td>"
+                "<td style='color:#F1F5F9; font-weight:600; text-align:right;'>%6 in · %7 out</td></tr>"
+                "<tr><td style='color:#64748B; padding:2px 0;'>PARTITION</td>"
+                "<td style='font-weight:600; text-align:right;'>%8</td></tr>"
+                "</table>")
+                .arg(QString::fromStdString(d.name))
+                .arg(d.samples)
+                .arg(d.features)
+                .arg(targetDesc)
+                .arg(classDesc)
+                .arg(d.inDim)
+                .arg(d.outDim)
+                .arg(splitStatus);
+
+            m_dsInfoLbl->setText(infoHtml);
+
+            if (m_legTrainLbl) {
+                if (d.tiny) {
+                    m_legTrainLbl->setText(QString::asprintf("● Train: 100%% (%llu samples)", (unsigned long long)d.nTrain));
+                    m_legValLbl->setText(QStringLiteral("● Val: —"));
+                    m_legTestLbl->setText(QStringLiteral("● Test: —"));
+                } else {
+                    int tp = m_trainPct;
+                    int vp = m_valPct;
+                    int ep = std::max(0, 100 - tp - vp);
+                    m_legTrainLbl->setText(QString::asprintf("● Train: %d%% (%llu)", tp, (unsigned long long)d.nTrain));
+                    m_legValLbl->setText(QString::asprintf("● Val: %d%% (%llu)", vp, (unsigned long long)d.nVal));
+                    m_legTestLbl->setText(QString::asprintf("● Test: %d%% (%llu)", ep, (unsigned long long)d.nTest));
+                }
             }
-            if (d.tiny)
-                info += QString::asprintf("Train: %llu | Val: — | Test: — (full table: tiny dataset, no held-out test)\n",
-                                          (unsigned long long)d.nTrain);
-            else {
-                std::size_t tot = d.nTrain + d.nVal + d.nTest;
-                int tp = tot ? (int)(100.0 * d.nTrain / tot) : 0;
-                int vp = tot ? (int)(100.0 * d.nVal / tot) : 0;
-                info += QString::asprintf("Train: %llu (%d%%) | Val: %llu (%d%%) | Test: %llu (%d%%)\n",
-                                          (unsigned long long)d.nTrain, tp,
-                                          (unsigned long long)d.nVal, vp,
-                                          (unsigned long long)d.nTest, 100 - tp - vp);
-            }
-            info += QString::asprintf("Input dim: %llu | Output dim: %llu",
-                                      (unsigned long long)d.inDim, (unsigned long long)d.outDim);
-            m_dsInfoLbl->setText(info);
 
             std::size_t eff = (kBatchVals[m_batchIdx] == 0 || kBatchVals[m_batchIdx] > d.nTrain)
                 ? d.nTrain : kBatchVals[m_batchIdx];
@@ -4072,7 +4209,7 @@ private:
         m_lossGroup.checkOnly((int)m_loss);
         m_optGroup.checkOnly((int)m_opt);
         m_outActCombo->blockSignals(true);
-        for (int i = 0; i < 6; ++i)
+        for (int i = 0; i < 7; ++i)
             if (m_outputAct == kOutActKeys[i]) m_outActCombo->setCurrentIndex(i);
         m_outActCombo->blockSignals(false);
         m_lrSpin->blockSignals(true);
@@ -4118,10 +4255,26 @@ private:
             m_splitBar->setSplits(m_trainPct, m_valPct, std::max(0, 100 - m_trainPct - m_valPct));
         }
         if (m_testPctLbl) {
-            m_testPctLbl->setText(QString::asprintf("%d%% test", std::max(0, 100 - m_trainPct - m_valPct)));
+            m_testPctLbl->setText(QString::asprintf("%d%%", std::max(0, 100 - m_trainPct - m_valPct)));
         }
         m_muRow->setVisible(m_opt == OPT_MOMENTUM);
         m_adamRow->setVisible(m_opt == OPT_ADAM);
+        if (m_rmspropRow) m_rmspropRow->setVisible(m_opt == OPT_RMSPROP);
+        if (m_rmspropAlphaSpin) {
+            m_rmspropAlphaSpin->blockSignals(true);
+            m_rmspropAlphaSpin->setValue(m_rmspropAlpha);
+            m_rmspropAlphaSpin->blockSignals(false);
+        }
+        if (m_weightDecaySpin) {
+            m_weightDecaySpin->blockSignals(true);
+            m_weightDecaySpin->setValue(m_weightDecay);
+            m_weightDecaySpin->blockSignals(false);
+        }
+        if (m_gradClipSpin) {
+            m_gradClipSpin->blockSignals(true);
+            m_gradClipSpin->setValue(m_gradClip);
+            m_gradClipSpin->blockSignals(false);
+        }
     }
 
     void applyPresetXor(bool refresh) {
@@ -4179,12 +4332,14 @@ private:
     void applyOptimizerDefaults() {
         if (m_opt == OPT_SGD) m_lr = 0.01;
         else if (m_opt == OPT_MOMENTUM) m_lr = 0.01;
+        else if (m_opt == OPT_RMSPROP) m_lr = 0.005;
         else m_lr = 0.05;
         m_lrSpin->blockSignals(true);
         m_lrSpin->setValue(m_lr);
         m_lrSpin->blockSignals(false);
         m_muRow->setVisible(m_opt == OPT_MOMENTUM);
         m_adamRow->setVisible(m_opt == OPT_ADAM);
+        if (m_rmspropRow) m_rmspropRow->setVisible(m_opt == OPT_RMSPROP);
     }
 
 public:

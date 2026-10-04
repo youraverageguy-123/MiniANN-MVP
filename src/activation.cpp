@@ -8,6 +8,7 @@ ActivationPtr ActivationFactory::create(const std::string& name) {
     if (name == "relu") return std::make_shared<ReLU>();
     if (name == "leaky_relu" || name == "leakyrelu") return std::make_shared<LeakyReLU>();
     if (name == "swish") return std::make_shared<Swish>();
+    if (name == "elu") return std::make_shared<ELU>();
     if (name == "linear") return std::make_shared<Linear>();
     if (name == "softmax") return std::make_shared<Softmax>();
     throw std::invalid_argument("ActivationFactory: unknown activation '" + name + "'");

@@ -82,17 +82,36 @@ public:
     std::string name() const override { return "momentum"; }
 };
 
+// RMSprop: exponentially decaying average of squared gradients.
+class RMSprop : public IOptimizer, public INeuronVisitor {
+private:
+    double lr_, alpha_, eps_;
+    std::vector<std::vector<Vector>> v_w_;
+    std::vector<std::vector<double>> v_b_;
+    std::size_t bs_ = 1;
+public:
+    explicit RMSprop(double lr = 0.01, double alpha = 0.99, double eps = 1e-8);
+    void step(NeuralNetwork& net, std::size_t batchSize) override;
+    void visit(std::size_t layer, std::size_t neuron, Neuron& n) override;
+    double lr() const override { return lr_; }
+    void setLearningRate(double lr) override { lr_ = lr; }
+    double alpha() const { return alpha_; }
+    double eps() const { return eps_; }
+    std::string name() const override { return "rmsprop"; }
+};
+
 // Hyperparameters exposed to the UI. Defaults match each class's ctor defaults.
 struct OptimizerConfig {
     double learningRate = 0.01;
     double momentum = 0.9;      // Momentum only
     double beta1 = 0.9;         // Adam only
     double beta2 = 0.999;       // Adam only
-    double epsilon = 1e-8;      // Adam only
+    double epsilon = 1e-8;      // Adam & RMSprop
+    double alpha = 0.99;        // RMSprop only
 };
 
 // Factory so the user picks the descent method by name at runtime:
-// "sgd" | "momentum" | "adam". Throws invalid_argument otherwise.
+// "sgd" | "momentum" | "adam" | "rmsprop". Throws invalid_argument otherwise.
 class OptimizerFactory {
 public:
     static std::unique_ptr<IOptimizer> create(const std::string& name, double lr);

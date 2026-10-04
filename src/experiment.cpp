@@ -317,6 +317,8 @@ ExperimentResult ExperimentController::run(const ExperimentConfig& cfg, Training
         tc.shuffle = cfg.shuffle;
         tc.seed = cfg.seed;
         tc.logEvery = 1;
+        tc.weightDecay = cfg.weightDecay;
+        tc.gradClip = cfg.gradClip;
 
         ControlCallback ctl{cb, stop};
         auto scheduler = SchedulerFactory::create(cfg.lrScheduler);

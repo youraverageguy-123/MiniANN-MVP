@@ -115,7 +115,7 @@ static void testAndOrGates() {
 
 static void testOptimizersDescend() {
     // Every optimizer must move weights and reduce loss on a trivial task.
-    for (const char* opt : {"sgd", "momentum", "adam"}) {
+    for (const char* opt : {"sgd", "momentum", "adam", "rmsprop"}) {
         Dataset d = makeXorGate();
         std::mt19937 rng(1);
         NeuralNetwork net;
@@ -262,6 +262,25 @@ static void testAutoPicksLabelColumn() {
     std::cout << "PASS auto-picks-label-column\n";
 }
 
+static void testRegularizationAndGradClip() {
+    Dataset d = makeXorGate();
+    std::mt19937 rng(42);
+    NeuralNetwork net;
+    net.addLayer(Layer(4, 2, ActivationFactory::create("elu"), rng, WeightInit::Xavier));
+    net.addLayer(Layer(1, 4, ActivationFactory::create("sigmoid"), rng, WeightInit::Xavier));
+    auto loss = LossFactory::create("mse");
+    auto opt = OptimizerFactory::create("rmsprop", 0.01);
+    Trainer trainer(net, *loss, *opt, nullptr);
+    TrainingConfig cfg;
+    cfg.epochs = 10;
+    cfg.batchSize = 2;
+    cfg.weightDecay = 0.01;
+    cfg.gradClip = 1.0;
+    trainer.fit(d, nullptr, cfg, nullptr);
+    assert(net.layers().size() == 2);
+    std::cout << "PASS regularization-and-grad-clip\n";
+}
+
 int main() {
     testXorConverges();
     testAndOrGates();
@@ -271,6 +290,7 @@ int main() {
     testConstantTargetRejected();
     testAutoPicksLabelColumn();
     testOptimizersDescend();
+    testRegularizationAndGradClip();
     testSplitDeterministic();
     testValidationRejectsBceMulti();
     testIrisPipeline();
