@@ -34,14 +34,14 @@ int main() {
     }
 
     // factories resolve every advertised token, reject garbage
-    for (const char* t : {"sigmoid", "tanh", "relu", "leaky_relu", "swish"})
+    for (const char* t : {"sigmoid", "tanh", "relu", "leaky_relu", "swish", "linear", "softmax"})
         assert(ActivationFactory::create(t) != nullptr);
     for (const char* t : {"sgd", "momentum", "adam"})
         assert(OptimizerFactory::create(t, 0.01) != nullptr);
     for (const char* t : {"mse", "bce", "cce"})
         assert(LossFactory::create(t) != nullptr);
     bool threw = false;
-    try { ActivationFactory::create("softmax"); } catch (const std::invalid_argument&) { threw = true; }
+    try { ActivationFactory::create("soft_max_typo"); } catch (const std::invalid_argument&) { threw = true; }
     assert(threw);
     threw = false;
     try { OptimizerFactory::create("newton", 0.01); } catch (const std::invalid_argument&) { threw = true; }
@@ -81,5 +81,13 @@ int main() {
     }
 
     std::cout << "NEW ACTIVATIONS + FACTORIES PASS\n";
+    // Runtime identity (polymorphism): every factory product names itself.
+    assert(LossFactory::create("mse")->name() == "mse");
+    assert(LossFactory::create("bce")->name() == "bce");
+    assert(LossFactory::create("cce")->name() == "cce");
+    assert(OptimizerFactory::create("sgd", 0.01)->name() == "sgd");
+    assert(OptimizerFactory::create("momentum", 0.01)->name() == "momentum");
+    assert(OptimizerFactory::create("adam", 0.01)->name() == "adam");
+    std::cout << "LOSS + OPTIMIZER NAMES PASS\n";
     return 0;
 }

@@ -116,7 +116,6 @@ This builds:
 | `test_choices.exe` | `tests/test_choices.cpp` |
 | `gradient_check.exe` | `tests/gradient_check.cpp` |
 | `test_training.exe` | `tests/test_training.cpp` (XOR convergence, split determinism, Iris pipeline) |
-| `test_patterns.exe` | `tests/test_patterns.cpp` (Strategy/Factory/Composite/Chain/Visitor unit checks) |
 | `and_or_demo.exe` | `demos/and_or_demo.cpp` |
 | `xor_demo.exe` | `demos/xor_demo.cpp` |
 | `iris_demo.exe` | `demos/iris_demo.cpp` |
@@ -283,24 +282,18 @@ Models can be saved/loaded, and presets (XOR / Iris / Binary) configure a
 working experiment in one click. All UI choices flow through a single
 `ExperimentConfig` into `ExperimentController` (`include/miniann/experiment.hpp`),
 which validates the configuration (readable errors, no exceptions in the UI),
-uses a deterministic, configurable train/val/test split (default 80/10/10,
-seeded; tiny ≤8-sample truth tables train on the full table with NO test
-metric reported — train performance is never relabeled as test accuracy),
-and evaluates the held-out test set exactly once, after training.
+uses a deterministic 80/10/10 train/val/test split (full-table evaluation for
+tiny ≤8-sample datasets), and evaluates the held-out test set separately.
 
 Notes:
 
 - Needs Qt6 Widgets installed (`pacman -S mingw-w64-ucrt-x86_64-qt6-base`
-  on MSYS2 UCRT64); without it, step 11/11 of `build.bat` prints a warning
+  on MSYS2 UCRT64); without it, step 10/10 of `build.bat` prints a warning
   and everything else still builds. `build.bat` never launches the GUI by itself.
 - Native OS text rendering with automatic per-monitor DPI handling, so text
   stays sharp on scaled displays (125%/150%). F11 toggles maximize.
-- CSV controls appear when CSV is selected: target column (`auto` detects the
-  label column from the header name or the value distribution, explicit
-  selection overrides it), header yes/no. The target column's distinct values
-  and range are shown so a wrong-column choice is visible; a constant target
-  is rejected outright (predicting a constant is trivially 100% and measures
-  nothing). Non-numeric cells and bad columns report in the summary bar
+- CSV controls appear when CSV is selected: target column (`auto` = last),
+  header yes/no. Non-numeric cells and bad columns report in the summary bar
   instead of crashing. Multiclass CSV targets (integer labels 0..K-1) are
   auto one-hot encoded.
 - BCE with a multi-output network is rejected with an error for the same reason.
@@ -309,35 +302,6 @@ Notes:
   needed (`TrainingHistory`, `TrainingCallback::shouldStop`), so these are
   pure UI additions.
 
-## Object-oriented design map (problem statement 5)
-
-Every math entity is a class behind an interface; behavior is selected by
-object composition, never by `if/else` chains on names or enums:
-
-| Pattern | Interface | Implementations | Factory |
-|---|---|---|---|
-| Strategy | `IActivation` | Sigmoid, Tanh, ReLU, LeakyReLU, Swish, Linear | `ActivationFactory` |
-| Strategy | `ILoss` | MSE, BCE, CCE | `LossFactory` |
-| Strategy | `IOptimizer` | SGD, Momentum, Adam | `OptimizerFactory` (+`OptimizerConfig`) |
-| Strategy | `IWeightInit` | Uniform, Xavier, He | `WeightInitFactory` |
-| Strategy | `INormalizer` | None, MaxAbs, MinMax (`normalize()` is a Template Method) | `NormalizerFactory` |
-| Strategy | `IMetric` | Accuracy, ConfusionMatrix | — |
-| Strategy | `ILogger` | ConsoleLogger | — |
-| Strategy | `Dataset::ISplitOrder` | Shuffled, Sequential | (bool convenience overload) |
-| Composite | `IValidationRule` (13 rules) | errors + advisories | `ConfigValidator::defaults()` |
-| Chain of Responsibility | `ITargetSelector` | HeaderName → DistinctValue → LastColumn | `TargetSelectorChain::defaults()` |
-| Factory | `IDatasetSource` | AND/OR/XOR gates, Iris, CSV | `DatasetSourceFactory` |
-| Visitor | `INeuronVisitor` | SGD/Momentum/Adam `visit()` | `NeuralNetwork::accept()` |
-| Observer hook | `TrainingCallback` | console + GUI bridges | — |
-| Qt framework | `QWidget`/`QMainWindow` | Plot/Boundary/Network widgets, workbench window | — |
-
-Composition chain: `NeuralNetwork` owns `vector<Layer>` → `Layer` owns
-`vector<Neuron>` → `Neuron` owns an `ActivationPtr`. `Trainer` receives
-model, loss, optimizer and logger by interface (Strategy injection), so
-`NeuralNetwork` has no `train()` method by design — the model never trains
-itself. `ExperimentConfig`/`TrainingConfig` are Parameter Objects;
-`ExperimentController` is the Facade between UI and backend.
-
 ## How to test (and what pass looks like)
 
 Run in order:
@@ -345,8 +309,6 @@ Run in order:
 ```bat
 .\test_basic.exe
 .\test_choices.exe
-.\test_training.exe
-.\test_patterns.exe
 .\gradient_check.exe
 .\and_or_demo.exe
 .\xor_demo.exe

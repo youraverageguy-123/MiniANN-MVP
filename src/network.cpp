@@ -31,10 +31,4 @@ void NeuralNetwork::zeroGradients() {
     for (auto& l : layers_) l.zeroGradients();
 }
 
-void NeuralNetwork::accept(INeuronVisitor& visitor) {
-    for (std::size_t l = 0; l < layers_.size(); ++l)
-        for (std::size_t j = 0; j < layers_[l].neurons().size(); ++j)
-            visitor.visit(l, j, layers_[l].neurons()[j]);
-}
-
 } // namespace miniann

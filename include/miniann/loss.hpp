@@ -11,12 +11,14 @@ public:
     virtual ~ILoss() = default;
     virtual double compute(const Vector& predicted, const Vector& target) const = 0;
     virtual Vector gradient(const Vector& predicted, const Vector& target) const = 0;
+    virtual std::string name() const = 0; // runtime identity (viva: polymorphism)
 };
 
 class MSELoss : public ILoss {
 public:
     double compute(const Vector& predicted, const Vector& target) const override;
     Vector gradient(const Vector& predicted, const Vector& target) const override;
+    std::string name() const override { return "mse"; }
 };
 
 // Binary cross-entropy for single-output sigmoid nets. Predictions are
@@ -26,6 +28,7 @@ public:
     explicit BCELoss(double eps = 1e-12) : eps_(eps) {}
     double compute(const Vector& predicted, const Vector& target) const override;
     Vector gradient(const Vector& predicted, const Vector& target) const override;
+    std::string name() const override { return "bce"; }
 private:
     double eps_;
 };
@@ -39,6 +42,7 @@ public:
     explicit CCELoss(double eps = 1e-12) : eps_(eps) {}
     double compute(const Vector& predicted, const Vector& target) const override;
     Vector gradient(const Vector& predicted, const Vector& target) const override;
+    std::string name() const override { return "cce"; }
 private:
     double eps_;
 };

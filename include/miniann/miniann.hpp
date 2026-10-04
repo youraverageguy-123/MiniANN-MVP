@@ -1,0 +1,21 @@
+#pragma once
+// Single public entry point for MiniANN as a library:
+//   #include "miniann/miniann.hpp"
+// Everything else is an implementation detail behind these interfaces.
+#include "miniann/types.hpp"
+#include "miniann/activation.hpp"
+#include "miniann/neuron.hpp"
+#include "miniann/layer.hpp"
+#include "miniann/network.hpp"
+#include "miniann/loss.hpp"
+#include "miniann/optimizer.hpp"
+#include "miniann/trainer.hpp"
+#include "miniann/dataset.hpp"
+#include "miniann/metrics.hpp"
+#include "miniann/logger.hpp"
+#include "miniann/serializer.hpp"
+#include "miniann/visualizer.hpp"
+#include "miniann/report.hpp"
+#include "miniann/cli.hpp"
+#include "miniann/preprocessing.hpp"
+#include "miniann/gui_contract.hpp"

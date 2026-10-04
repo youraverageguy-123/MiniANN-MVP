@@ -5,8 +5,11 @@ namespace miniann {
 
 class Layer {
 public:
+    // fanOut defaults to numNeurons (previous behavior). Pass the next-layer
+    // width for a correct Xavier limit on hidden layers.
     Layer(std::size_t numNeurons, std::size_t numInputs, ActivationPtr act,
-          std::mt19937& rng, WeightInit init = WeightInit::Xavier);
+          std::mt19937& rng, WeightInit init = WeightInit::Xavier,
+          std::size_t fanOut = 0);
 
     Vector forward(const Vector& inputs);
     Vector backward(const Vector& dLoss_dOutput); // returns dLoss/dInputs

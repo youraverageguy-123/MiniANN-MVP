@@ -67,37 +67,6 @@ Dataset::splitTrainValTest(double trainFraction, double valFraction, unsigned se
     return {tr, va, te};
 }
 
-void Dataset::ShuffledOrder::order(std::vector<std::size_t>& idx, unsigned seed) const {
-    std::mt19937 rng(seed);
-    std::shuffle(idx.begin(), idx.end(), rng);
-}
-
-void Dataset::SequentialOrder::order(std::vector<std::size_t>&, unsigned) const {}
-
-std::tuple<Dataset, Dataset, Dataset>
-Dataset::splitCounts(std::size_t nTrain, std::size_t nVal, const ISplitOrder& order, unsigned seed) const {
-    if (inputs_.empty()) throw std::runtime_error("Dataset::splitCounts: empty dataset");
-    if (nTrain == 0) throw std::invalid_argument("Dataset::splitCounts: need >= 1 train sample");
-    if (nTrain + nVal >= inputs_.size())
-        throw std::invalid_argument("Dataset::splitCounts: need >= 1 test sample");
-    std::vector<std::size_t> idx(inputs_.size());
-    for (std::size_t i = 0; i < idx.size(); ++i) idx[i] = i;
-    order.order(idx, seed);
-    Dataset tr, va, te;
-    for (std::size_t k = 0; k < idx.size(); ++k) {
-        if (k < nTrain) tr.add(inputs_[idx[k]], targets_[idx[k]]);
-        else if (k < nTrain + nVal) va.add(inputs_[idx[k]], targets_[idx[k]]);
-        else te.add(inputs_[idx[k]], targets_[idx[k]]);
-    }
-    return {tr, va, te};
-}
-
-std::tuple<Dataset, Dataset, Dataset>
-Dataset::splitCounts(std::size_t nTrain, std::size_t nVal, unsigned seed, bool doShuffle) const {
-    if (doShuffle) return splitCounts(nTrain, nVal, ShuffledOrder(), seed);
-    return splitCounts(nTrain, nVal, SequentialOrder(), seed);
-}
-
 void Dataset::validate() const {
     if (inputs_.empty()) throw std::runtime_error("Dataset::validate: empty dataset");
     std::size_t ni = inputs_[0].size(), nt = targets_[0].size();

@@ -1,4 +1,5 @@
 #include "miniann/metrics.hpp"
+#include <sstream>
 #include <stdexcept>
 #include <iostream>
 #include <algorithm>
@@ -20,7 +21,7 @@ double Accuracy::evaluate(const std::vector<Vector>& preds,
             throw std::invalid_argument("Accuracy: dim mismatch");
         bool ok;
         if (preds[i].size() == 1) {
-            ok = ((preds[i][0] >= 0.5) ? 1 : 0) == ((targets[i][0] >= 0.5) ? 1 : 0);
+            ok = ((preds[i][0] >= threshold_) ? 1 : 0) == ((targets[i][0] >= 0.5) ? 1 : 0);
         } else {
             ok = argmax(preds[i]) == argmax(targets[i]);
         }
@@ -34,8 +35,9 @@ double ConfusionMatrix::evaluate(const std::vector<Vector>& preds,
     matrix_.assign(numClasses_, std::vector<std::size_t>(numClasses_, 0));
     if (preds.size() != targets.size())
         throw std::invalid_argument("ConfusionMatrix: size mismatch");
-    auto toClass = [](const Vector& v) -> std::size_t {
-        if (v.size() == 1) return v[0] >= 0.5 ? 1 : 0;
+    double th = threshold_;
+    auto toClass = [th](const Vector& v) -> std::size_t {
+        if (v.size() == 1) return v[0] >= th ? 1 : 0;
         return argmax(v);
     };
     for (std::size_t i = 0; i < preds.size(); ++i) {
@@ -55,13 +57,19 @@ double ConfusionMatrix::evaluate(const std::vector<Vector>& preds,
 }
 
 void ConfusionMatrix::print() const {
+    std::cout << toString();
+}
+
+std::string ConfusionMatrix::toString() const {
+    std::ostringstream os;
     for (std::size_t i = 0; i < numClasses_; ++i) {
         for (std::size_t j = 0; j < numClasses_; ++j) {
-            if (j) std::cout << " ";
-            std::cout << matrix_[i][j];
+            if (j) os << " ";
+            os << matrix_[i][j];
         }
-        std::cout << "\n";
+        os << "\n";
     }
+    return os.str();
 }
 
 double ConfusionMatrix::precision(std::size_t c) const {
@@ -76,6 +84,18 @@ double ConfusionMatrix::recall(std::size_t c) const {
     std::size_t tp = matrix_[c][c], row = 0;
     for (std::size_t j = 0; j < numClasses_; ++j) row += matrix_[c][j];
     return row ? double(tp) / double(row) : 0.0;
+}
+
+double ConfusionMatrix::f1(std::size_t c) const {
+    double p = precision(c), r = recall(c);
+    return (p + r) > 0.0 ? 2.0 * p * r / (p + r) : 0.0;
+}
+
+double ConfusionMatrix::macroF1() const {
+    if (numClasses_ == 0 || matrix_.empty()) return 0.0;
+    double s = 0.0;
+    for (std::size_t c = 0; c < numClasses_; ++c) s += f1(c);
+    return s / double(numClasses_);
 }
 
 } // namespace miniann
